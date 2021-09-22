@@ -16,7 +16,7 @@ During the model instance initialization, the stateful backend reserves CPU or G
    the beginning of the sequence. See the example model for a reference.
  
 
-1. Create a model config file that matches the ONNX model. The model config file
+2. Create a model config file that matches the ONNX model. The model config file
    only needs to have the standard Input and Outputs excluding the state tensors
    listed. The state pairs are listed as below for the example ONNX model:
 
@@ -27,7 +27,7 @@ During the model instance initialization, the stateful backend reserves CPU or G
    }
 ```
 
-1. Incorporate the model file in Triton's Model Repository
+3. Incorporate the model file in Triton's Model Repository
 
 ```
         model_repository
