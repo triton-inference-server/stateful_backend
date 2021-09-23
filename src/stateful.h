@@ -22,7 +22,7 @@
 
 namespace triton {
   namespace backend {
-    namespace onnx_stateful {
+    namespace stateful {
       namespace utils {
 TRITONSERVER_Error*
 InitTritonTensorInfo(
@@ -43,4 +43,4 @@ InitTritonTensorInfo(
 
   return nullptr;  // success
 }
-}}}}  // namespace triton::backend::onnx_stateful::utils
+}}}}  // namespace triton::backend::stateful::utils

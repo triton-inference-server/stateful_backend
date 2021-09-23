@@ -29,8 +29,6 @@ project(tritononnxstatefulbackend LANGUAGES C CXX CUDA)
 # Must include options required for this project as well as any
 # projects included in this one by FetchContent.
 #
-# GPU support is disabled by default because onnx_stateful backend doesn't
-# support GPUs.
 #
 option(TRITON_ENABLE_GPU "Enable GPU support in backend" ON)
 option(TRITON_ENABLE_STATS "Include statistics collections in backend" ON)
@@ -76,7 +74,7 @@ FetchContent_MakeAvailable(repo-common repo-core repo-backend)
 #
 # Shared library implementing the Triton Backend API
 #
-configure_file(src/libtriton_onnx_stateful.ldscript libtriton_onnx_stateful.ldscript COPYONLY)
+configure_file(src/libtriton_stateful.ldscript libtriton_stateful.ldscript COPYONLY)
 
 # Move the ORT Libraries to the build directory
 file(COPY /workspace/onnxruntime/build/Linux/Release/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/ort-lib)
@@ -84,19 +82,19 @@ file(COPY /workspace/onnxruntime/build/Linux/Release/ DESTINATION ${CMAKE_CURREN
 set(TRT_SAMPLE_PATH /workspace/tensorrt/samples)
 
 add_library(
-  triton-onnx-stateful-backend SHARED
-  src/onnx_stateful.cc
+  triton-stateful-backend SHARED
+  src/stateful.cc
   src/onnx_model_runner.cc
   src/cuda_kernels.cu
   ${TRT_SAMPLE_PATH}/common/logger.cpp
 )
 
 add_library(
-    TritonOnnxStatefulBackend::triton-onnx-stateful-backend ALIAS triton-onnx-stateful-backend
+    TritonOnnxStatefulBackend::triton-stateful-backend ALIAS triton-stateful-backend
 )
 
 target_include_directories(
-  triton-onnx-stateful-backend
+  triton-stateful-backend
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${TRT_SAMPLE_PATH}
@@ -106,15 +104,15 @@ target_include_directories(
     /workspace/onnxruntime/include/onnxruntime/core/providers/cuda
 )
 
-target_compile_features(triton-onnx-stateful-backend PRIVATE cxx_std_11)
+target_compile_features(triton-stateful-backend PRIVATE cxx_std_11)
 target_compile_options(
-  triton-onnx-stateful-backend PRIVATE
+  triton-stateful-backend PRIVATE
   $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
     -Wall -Wextra -Wno-unused-parameter -Wno-type-limits>
 )
 
 target_link_libraries(
-  triton-onnx-stateful-backend
+  triton-stateful-backend
   PRIVATE
     triton-backend-utils    # from repo-backend
     triton-core-serverstub  # from repo-core
@@ -124,20 +122,20 @@ target_link_libraries(
 )
 
 target_link_directories(
-  triton-onnx-stateful-backend
+  triton-stateful-backend
   PRIVATE
   ${CMAKE_CURRENT_BINARY_DIR}/ort-lib
 )
 
 set_target_properties(
-  triton-onnx-stateful-backend PROPERTIES
+  triton-stateful-backend PROPERTIES
   POSITION_INDEPENDENT_CODE ON
-  OUTPUT_NAME triton_onnx_stateful
-  LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libtriton_onnx_stateful.ldscript
-  LINK_FLAGS "-Wl,--version-script libtriton_onnx_stateful.ldscript"
+  OUTPUT_NAME triton_stateful
+  LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libtriton_stateful.ldscript
+  LINK_FLAGS "-Wl,--version-script libtriton_stateful.ldscript"
 )
 
-set_property(TARGET triton-onnx-stateful-backend PROPERTY CUDA_ARCHITECTURES 70 75 80)
+set_property(TARGET triton-stateful-backend PROPERTY CUDA_ARCHITECTURES 70 75 80)
 
 #
 # Install
@@ -145,9 +143,9 @@ set_property(TARGET triton-onnx-stateful-backend PROPERTY CUDA_ARCHITECTURES 70 
 set(CMAKE_SKIP_INSTALL_ALL_DEPENDENCY true)
 install(
   TARGETS
-    triton-onnx-stateful-backend
+    triton-stateful-backend
   LIBRARY 
-    DESTINATION backends/onnx_stateful
+    DESTINATION backends/stateful
 )
 
 export(PACKAGE TritonOnnxStatefulBackend)

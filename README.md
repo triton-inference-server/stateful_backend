@@ -54,12 +54,12 @@ $ docker build --tag triton-21.08-backend -f docker/Dockerfile.backend .
 
 2. Create a container of the previously built image:
 ```
-$ docker run --gpus all -it --rm --shm-size=1g --ulimit memlock=-1 --ulimit stack=67108864 -v${PWD}:/workspace/onnx-stateful triton-21.08-backend
+$ docker run --gpus all -it --rm --shm-size=1g --ulimit memlock=-1 --ulimit stack=67108864 -v${PWD}:/workspace/stateful triton-21.08-backend
 ```
 
 3. Inside the container, run the following:
 ```
-$ mkdir -p /workspace/onnx-stateful/build && cd /workspace/onnx-stateful/build
+$ mkdir -p /workspace/stateful/build && cd /workspace/stateful/build
 $ cmake -DCMAKE_INSTALL_PREFIX:PATH=`pwd`/install -DTRITON_BACKEND_REPO_TAG="r21.08" -DTRITON_CORE_REPO_TAG="r21.08" -DTRITON_COMMON_REPO_TAG="r21.08" ..
 $ make -j
 $ make install

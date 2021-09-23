@@ -40,10 +40,10 @@
 #include "NvInfer.h"
 #include "onnx_model_runner.h"
 
-#include "onnx_stateful.h"
+#include "stateful.h"
 #include <onnxruntime_cxx_api.h>
 
-namespace triton { namespace backend { namespace onnx_stateful {
+namespace triton { namespace backend { namespace stateful {
 
 //
 // Simple backend that demonstrates the TRITONBACKEND API for a
@@ -1049,4 +1049,4 @@ TRITONBACKEND_ModelInstanceExecute(
 
 }  // extern "C"
 
-}}}  // namespace triton::backend::onnx_stateful
+}}}  // namespace triton::backend::stateful

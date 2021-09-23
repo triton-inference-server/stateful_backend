@@ -20,7 +20,7 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 name: "accumulate"
-backend: "onnx_stateful"
+backend: "stateful"
 max_batch_size: 64
 sequence_batching {
   max_sequence_idle_microseconds: 100000000

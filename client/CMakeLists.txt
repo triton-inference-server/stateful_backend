@@ -47,7 +47,7 @@ function(build_client src exe)
     TARGETS ${exe}
     RUNTIME DESTINATION bin
   )
-  target_include_directories(${exe} PUBLIC "/workspace/onnx-stateful/common" ${GRPC_CLIENT_INC_DIR})
+  target_include_directories(${exe} PUBLIC ${GRPC_CLIENT_INC_DIR})
 endfunction(build_client)
 
 if(WIN32)
