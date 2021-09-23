@@ -1,0 +1,4 @@
+__pycache__/
+client/build/**
+build/**
+.vscode*

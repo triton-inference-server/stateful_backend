@@ -1,0 +1,88 @@
+# The MIT License (MIT)
+# 
+# Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy of
+# this software and associated documentation files (the "Software"), to deal in
+# the Software without restriction, including without limitation the rights to
+# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+# the Software, and to permit persons to whom the Software is furnished to do so,
+# subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+# FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+# COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+# IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+# CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+ARG BASE_IMAGE=nvcr.io/nvidia/tensorrt:21.08-py3
+FROM ${BASE_IMAGE}
+
+ARG CMAKE_UBUNTU_VERSION=20.04
+
+# Ensure apt-get won't prompt for selecting options
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+            software-properties-common \
+            autoconf \
+            automake \
+            build-essential \
+            curl \
+            git \
+            libb64-dev \
+            libopencv-dev \
+            libopencv-core-dev \
+            libssl-dev \
+            libtool \
+            pkg-config \
+            python3 \
+            python3-pip \
+            python3-dev \
+            rapidjson-dev \
+            vim \
+            gdb \
+            wget && \
+    pip3 install --upgrade wheel setuptools && \
+    pip3 install --upgrade grpcio-tools
+
+
+# Client build requires recent version of CMake (FetchContent required)
+RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | \
+      gpg --dearmor - |  \
+      tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null && \
+    if [ "$CMAKE_UBUNTU_VERSION" = "20.04" ]; then \
+      apt-add-repository 'deb https://apt.kitware.com/ubuntu/ focal main' && \
+      apt-get update && \
+      apt-get install -y --no-install-recommends \
+        cmake-data=3.18.4-0kitware1ubuntu20.04.1 cmake=3.18.4-0kitware1ubuntu20.04.1; \
+    elif [ "$CMAKE_UBUNTU_VERSION" = "18.04" ]; then \
+      apt-add-repository 'deb https://apt.kitware.com/ubuntu/ bionic main' && \
+      apt-get update && \
+      apt-get install -y --no-install-recommends \
+        cmake-data=3.18.4-0kitware1 cmake=3.18.4-0kitware1; \
+    else \
+      echo "ERROR: Only support CMAKE_UBUNTU_VERSION to be 18.04 or 20.04" && false; \
+    fi && \
+    cmake --version
+
+# Build expects "python" executable (not python3).
+RUN rm -f /usr/bin/python && \
+    ln -s /usr/bin/python3 /usr/bin/python
+
+
+# Remove older cmake
+RUN rm -f /usr/local/bin/cmake
+
+# Workspace dir
+WORKDIR /workspace
+
+# Build ONNXRT branch with TRT 8 support - update it to an actual ORT release
+# once ORT officially supports TRT 8
+RUN git clone --branch stevenlix/trt8  https://github.com/microsoft/onnxruntime.git && cd /workspace/onnxruntime && git checkout 3d884f0d3ab8e538bb4bae0fd0a7efdc08645273
+RUN cd /workspace/onnxruntime && ./build.sh --use_cuda --cuda_home /usr/local/cuda-11.4/ --cuda_version 11.4 --cudnn_home /usr/lib/x86_64-linux-gnu/ --use_tensorrt --tensorrt_home /usr/lib/x86_64-linux-gnu/ --parallel 8 --build_shared_lib --config Release --skip_tests

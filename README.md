@@ -39,6 +39,38 @@ During the model instance initialization, the stateful backend reserves CPU or G
 ```
 
 ## How to build?
+### How to build the backend?
+Run:
+```
+$ python3 ./build.py
+```
+The backend binary will be produced in `build/install/backends` directory.
+
+Alternatively, you can do the following steps to build manually (NOTE: we will be using 21.08 NGC containers):
+1. Build the custom docker image which we will use to build the backend:
+```
+$ docker build --tag triton-21.08-backend -f docker/Dockerfile.backend .
+```
+
+2. Create a container of the previously built image:
+```
+$ docker run --gpus all -it --rm --shm-size=1g --ulimit memlock=-1 --ulimit stack=67108864 -v${PWD}:/workspace/onnx-stateful triton-21.08-backend
+```
+
+3. Inside the container, run the following:
+```
+$ mkdir -p /workspace/onnx-stateful/build && cd /workspace/onnx-stateful/build
+$ cmake -DCMAKE_INSTALL_PREFIX:PATH=`pwd`/install -DTRITON_BACKEND_REPO_TAG="r21.08" -DTRITON_CORE_REPO_TAG="r21.08" -DTRITON_COMMON_REPO_TAG="r21.08" ..
+$ make -j
+$ make install
+```
+
+### How to build and test the backend?
+Run: 
+```
+$ python3 scripts/test.py
+```
+It will build the backend, start the tritonserver with the backend, run a simple client with the accumulate model.
 
 ## Additional Features 
 * Stateful backend can do dynamic batching along any tensor dimension. The batch dimension should be marked with -1 in the model configuration file for the input and output tensors. 
