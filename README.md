@@ -3,9 +3,12 @@
 
 This repository contains code for the Stateful Backend for Triton Inference Server, where the models have matching input and output tensors to keep track of the model states. The model states are input and output tensors. However, they are treated differently compared to standard input and output tensors. An output state tensor for a sequence id is passed as input state during the next inference execution of the same sequence id. In addition, we do not need to communicate the state tensors between server and client. The server keeps the state tensors for all active sequences on CPU or GPU memory to restore them when a sequence id has an inference request.
 
-The state tensors are provided in the model configuration file for an example model with two state tensors as below:
+The state tensors are provided in the model configuration file. For the example model in models/accumulate, the state tensors are specified as below:
 ```
-<<<State0_Input, State1_Output>>> <<<State1_Input, State1_Output>>>   
+   {
+    key: "state_pairs"
+    value: { string_value: "<<<Accumulate_In, Accumulate_Out>>>" }
+   }
 ```
 
 During the model instance initialization, the stateful backend reserves CPU or GPU memory as large as `max_candidate_sequences * sum_of_all_state_tensor_sizes` to store and restore the model state tensors. 
@@ -26,6 +29,25 @@ During the model instance initialization, the stateful backend reserves CPU or G
     value: { string_value: "<<<Accumulate_In, Accumulate_Out>>>" }
    }
 ```
+
+   We also need a mapping between `CONTROL_SEQUENCE_START` to  `ResetSequence`
+   boolean input tensor to reset the values of state tensors. If the boolean input tensor is
+   set to `true` for a batch, the input state values will be ignored and the model will use the 
+   initial values of the states stored in the ONNX model file as constants. This mapping allows
+   the stateful backend to reset the state tensor values for the start of a sequence. 
+
+```
+        {
+          name: "ResetSequence"
+          control [
+            {
+              kind: CONTROL_SEQUENCE_START
+              int32_false_true: [ 0, 1 ]
+            }
+          ]
+        }
+```
+    
 
 3. Incorporate the model file in Triton's Model Repository
 
@@ -81,7 +103,7 @@ provides the output state (the running sum) as input to the model when the
 corresponding sequence has an inference request.
 
 The model configuration file maps `CONTROL_SEQUENCE_START` signal to
-`ResetState` model input to initialize the state values with 0 constants stored
+`ResetSequence` model input to initialize the state values with 0 constants stored
 in the ONNX model. The files and folder structure can be used
 to serve similar stateful ONNX models.
 
