@@ -25,21 +25,23 @@
 #include <cuda_provider_factory.h>
 #include <onnxruntime_cxx_api.h>
 #include <tensorrt_provider_factory.h>
+#include <chrono>
 #include <map>
+#include <memory>
+#include <set>
 #include <sstream>
 #include <unordered_map>
-#include <chrono>
-#include <set>
-#include <memory>
-#include "common.h"
 #include "buffers.h"
+#include "common.h"
 
-using time_point_t = std::chrono::steady_clock::time_point; // use wall clock
+using time_point_t = std::chrono::steady_clock::time_point;  // use wall clock
 #define NOW std::chrono::steady_clock::now
 #define DURATION_MICRO std::chrono::duration_cast<std::chrono::microseconds>
 #define DURATION std::chrono::duration_cast<std::chrono::seconds>
 
-inline std::string GetTimeStampForLogs() {
+inline std::string
+GetTimeStampForLogs()
+{
   std::time_t timestamp = std::time(nullptr);
   tm* tm_local = std::localtime(&timestamp);
   std::stringstream ss;
@@ -53,35 +55,41 @@ inline std::string GetTimeStampForLogs() {
   return ss.str();
 }
 
-namespace samplesCommon
-{
+namespace samplesCommon {
 
 
-class ManagedBufferInternal
-{
-public:
-    DeviceBuffer deviceBuffer;
-    HostBuffer hostBuffer;
-    
-    // resize host buffer and selectively resize GPU buffer if isdevice is set
-    void resizeAll(const nvinfer1::Dims& dims, bool isdevice) {
-        if (isdevice) deviceBuffer.resize(dims);
-        hostBuffer.resize(dims);
-    }
-    // resize either host or device buffer
-    void resize(const nvinfer1::Dims& dims, bool isdevice) {
-        if (isdevice) deviceBuffer.resize(dims);
-        else hostBuffer.resize(dims);
-    }
-    // return either host or device buffer
-    void* data(bool isdevice) {
-        if (isdevice) return deviceBuffer.data();
-        else return hostBuffer.data();
-    }
+class ManagedBufferInternal {
+ public:
+  DeviceBuffer deviceBuffer;
+  HostBuffer hostBuffer;
+
+  // resize host buffer and selectively resize GPU buffer if isdevice is set
+  void resizeAll(const nvinfer1::Dims& dims, bool isdevice)
+  {
+    if (isdevice)
+      deviceBuffer.resize(dims);
+    hostBuffer.resize(dims);
+  }
+  // resize either host or device buffer
+  void resize(const nvinfer1::Dims& dims, bool isdevice)
+  {
+    if (isdevice)
+      deviceBuffer.resize(dims);
+    else
+      hostBuffer.resize(dims);
+  }
+  // return either host or device buffer
+  void* data(bool isdevice)
+  {
+    if (isdevice)
+      return deviceBuffer.data();
+    else
+      return hostBuffer.data();
+  }
 };
 
 
-}
+}  // namespace samplesCommon
 
 static const int MAX_IO_NUM = 5;
 static const int INVALID_DIM = 1000;
@@ -100,11 +108,11 @@ class TritonTensorInfo {
   size_t type_size;
   size_t idx;
 
-  // calculated 
+  // calculated
   size_t vol;
   size_t batch_dim;
-  size_t sizeX {1};
-  size_t sizeY {1};
+  size_t sizeX{1};
+  size_t sizeY{1};
 
 
   std::string Init()
@@ -131,7 +139,8 @@ class TritonTensorInfo {
     return log;
   }
 
-  static size_t TypeToTypeSize(const std::string& typ) {
+  static size_t TypeToTypeSize(const std::string& typ)
+  {
     size_t sz = 0;
     if (typ.compare("TYPE_FP16") == 0) {
       sz = 2;
@@ -165,10 +174,7 @@ class TritonTensorInfo {
       vol *= shape[i];
     }
   }
-  void InitTypeSize()
-  {
-    type_size = TypeToTypeSize(type);
-  }
+  void InitTypeSize() { type_size = TypeToTypeSize(type); }
 
   void InitBatchDim()
   {
@@ -177,24 +183,24 @@ class TritonTensorInfo {
       if (shape[i] == -1) {
         batch_dim = (int)i;
         // set batch dim to 1 so that we can calculate volume
-        shape[i] = 1; 
+        shape[i] = 1;
         return;
       }
     }
   }
 
-  void InitBatchStrides() {
+  void InitBatchStrides()
+  {
     sizeX = 1;
     sizeY = 1;
     for (size_t i = 0; i < shape.size(); ++i) {
       if (i < batch_dim) {
         sizeX *= shape[i];
-      } else if(i > batch_dim) {
+      } else if (i > batch_dim) {
         sizeY *= shape[i];
       }
     }
   }
-
 };
 
 // Tensor data in the ONNX model
@@ -209,11 +215,12 @@ class OrtTensorInfo {
   ONNXTensorElementDataType type;
 
 
-  void Print(std::ostream& os) {
+  void Print(std::ostream& os)
+  {
     os << "OrtTensorInfo" << std::endl;
     os << "Num dims = " << num_dims << std::endl;
     os << "Shape = ";
-    for (size_t i=0; i < num_dims; ++i) {
+    for (size_t i = 0; i < num_dims; ++i) {
       os << shape[i] << " x ";
     }
     os << std::endl;
@@ -224,7 +231,6 @@ class OrtTensorInfo {
 
     os << "Is input = " << is_input;
     os << std::endl;
-
   }
 };
 
@@ -236,7 +242,7 @@ class InferenceTask {
   uint64_t mCorrId;
   const void* mInput[MAX_IO_NUM];
   void* mOutput[MAX_IO_NUM];
-  std::string err_msg; // will be used to track individual error
+  std::string err_msg;  // will be used to track individual error
 };
 
 // The TrtOnnxModel class implements loading and running a stateful ONNX model.
@@ -274,25 +280,24 @@ class TrtOnnxModel {
   // Prepares the model for inference by creating execution contexts and
   // allocating buffers.
   std::string Prepare(
-      std::stringstream& ss_logs,
-      std::shared_ptr<Ort::Env> ort_env,
-      std::string onnx_file_name, std::string state_pairs,
-      int maxNbConnections, int gpuId,
-      std::vector<int64_t>& pref_batch_sizes,
+      std::stringstream& ss_logs, std::shared_ptr<Ort::Env> ort_env,
+      std::string onnx_file_name, std::string state_pairs, int maxNbConnections,
+      int gpuId, std::vector<int64_t>& pref_batch_sizes,
       const std::vector<TritonTensorInfo>& input_tensors,
       const std::vector<TritonTensorInfo>& output_tensors,
-      std::string reset_tensor_name, bool useTrtEp = true, 
-      bool useFp16 = false, bool pad_to_max_batch = false,
-      bool enable_trt_caching = false, int64_t logLevel=1, 
-      int64_t metricLoggingFreq=0, int64_t sequnce_timeout_microseconds=INT64_MAX);
+      std::string reset_tensor_name, bool useTrtEp = true, bool useFp16 = false,
+      bool pad_to_max_batch = false, bool enable_trt_caching = false,
+      int64_t logLevel = 1, int64_t metricLoggingFreq = 0,
+      int64_t sequnce_timeout_microseconds = INT64_MAX);
 
   // Runs inference for multiple tasks for Triton backend
   std::string InferTasks(
-      std::stringstream& ss_logs,
-      std::vector<InferenceTask>& inferenceTasks, int batchSize,
-      uint64_t& comp_start_ns=U64_ZERO, uint64_t& comp_end_ns=U64_ZERO);
-  
-  void SetSequenceResetLogging(bool enableLogging) {
+      std::stringstream& ss_logs, std::vector<InferenceTask>& inferenceTasks,
+      int batchSize, uint64_t& comp_start_ns = U64_ZERO,
+      uint64_t& comp_end_ns = U64_ZERO);
+
+  void SetSequenceResetLogging(bool enableLogging)
+  {
     mLogResetSequence = enableLogging;
   }
 
@@ -330,8 +335,8 @@ class TrtOnnxModel {
       std::vector<InferenceTask>& inferenceTasks, int batchSize,
       int batchStride);
   std::string prepareDeviceStoreIds(
-      std::stringstream& verbose_ss,
-      std::vector<InferenceTask>& inferenceTasks, int batchSize);
+      std::stringstream& verbose_ss, std::vector<InferenceTask>& inferenceTasks,
+      int batchSize);
 
   std::unordered_map<uint64_t, std::pair<int, time_point_t>> mStoreIdMap;
   std::set<int> mStoreAvailableIds;
@@ -469,9 +474,9 @@ class TrtOnnxModel {
             next_pos = line.find("<<<", end_second);
 
             std::string first_name =
-              line.substr(begin_first, end_first - begin_first + 1);
+                line.substr(begin_first, end_first - begin_first + 1);
             std::string second_name =
-              line.substr(begin_second, end_second - begin_second + 1);
+                line.substr(begin_second, end_second - begin_second + 1);
 
             input_state_names.push_back(first_name);
             output_state_names.push_back(second_name);
@@ -507,13 +512,13 @@ class TrtOnnxModel {
               next_pos = line.find("<<<", end_second);
 
               std::string first_name =
-                line.substr(begin_first, end_first - begin_first + 1);
+                  line.substr(begin_first, end_first - begin_first + 1);
               std::string second_name =
-                line.substr(begin_second, end_second - begin_second + 1);
+                  line.substr(begin_second, end_second - begin_second + 1);
 
-              // remove anything after the first occurence of  ":" from the tensor
-              // names These are tensor dimensions that could be read from the
-              // ONNX model file already
+              // remove anything after the first occurence of  ":" from the
+              // tensor names These are tensor dimensions that could be read
+              // from the ONNX model file already
               size_t col_pos = first_name.find(':');
               if (col_pos != std::string::npos)
                 first_name = first_name.substr(0, col_pos);

@@ -40,17 +40,17 @@
 #include "NvInfer.h"
 #include "onnx_model_runner.h"
 
-#include "stateful.h"
 #include <onnxruntime_cxx_api.h>
+#include "stateful.h"
 
 namespace triton { namespace backend { namespace stateful {
 
 //
 // Simple backend that demonstrates the TRITONBACKEND API for a
-// blocking backend with state tensors for sequence models. 
+// blocking backend with state tensors for sequence models.
 // A blocking backend completes execution of the
 // inference before returning from TRITONBACKED_ModelInstanceExecute.
-// The model must store the values to initialize the state tensors 
+// The model must store the values to initialize the state tensors
 // when new sequence starts.
 //
 
@@ -70,11 +70,11 @@ namespace triton { namespace backend { namespace stateful {
     }                                                                   \
   } while (false)
 
-#define CHECK_IF_ERROR(X, success_)      \
-  do {                                   \
-    TRITONSERVER_Error* err__ = (X);     \
-    success_ = (err__ == nullptr);       \
-    TRITONSERVER_ErrorDelete(err__);     \
+#define CHECK_IF_ERROR(X, success_)  \
+  do {                               \
+    TRITONSERVER_Error* err__ = (X); \
+    success_ = (err__ == nullptr);   \
+    TRITONSERVER_ErrorDelete(err__); \
   } while (false)
 
 #define INT2TRITON_LOG_LEVEL(l_) static_cast<TRITONSERVER_LogLevel>(l_)
@@ -171,16 +171,20 @@ TRITONSERVER_Error*
 ModelState::InitModelState()
 {
   bool parse_succeeded;
-  logging_level_ = TRITON2INT_LOG_LEVEL(TRITONSERVER_LOG_INFO); // default level info
-  
+  logging_level_ =
+      TRITON2INT_LOG_LEVEL(TRITONSERVER_LOG_INFO);  // default level info
+
   common::TritonJson::Value parameters;
   RETURN_IF_ERROR(model_config_.MemberAsObject("parameters", &parameters));
 
   common::TritonJson::Value logging_level;
   std::string str_logging_level;
-  CHECK_IF_ERROR(parameters.MemberAsObject("logging_level", &logging_level), parse_succeeded);
+  CHECK_IF_ERROR(
+      parameters.MemberAsObject("logging_level", &logging_level),
+      parse_succeeded);
   if (parse_succeeded) {
-    IGNORE_ERROR(logging_level.MemberAsString("string_value", &str_logging_level));
+    IGNORE_ERROR(
+        logging_level.MemberAsString("string_value", &str_logging_level));
   }
   if (str_logging_level.compare("NONE") == 0) {
     logging_level_ = -1;
@@ -190,13 +194,15 @@ ModelState::InitModelState()
   }
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
-      (std::string("Logging Level = ") + str_logging_level 
-      + " :: " + std::to_string(logging_level_)).c_str());
+      (std::string("Logging Level = ") + str_logging_level +
+       " :: " + std::to_string(logging_level_))
+          .c_str());
 
   std::string str_logs;
   common::TritonJson::Value inputs;
   RETURN_IF_ERROR(model_config_.MemberAsArray("input", &inputs));
-  RETURN_IF_ERROR(utils::InitTritonTensorInfo(inputs, input_tensors_, str_logs));
+  RETURN_IF_ERROR(
+      utils::InitTritonTensorInfo(inputs, input_tensors_, str_logs));
   if (logging_level_ >= 0) {
     LOG_MESSAGE(INT2TRITON_LOG_LEVEL(logging_level_), str_logs.c_str());
     str_logs.clear();
@@ -204,7 +210,8 @@ ModelState::InitModelState()
 
   common::TritonJson::Value outputs;
   RETURN_IF_ERROR(model_config_.MemberAsArray("output", &outputs));
-  RETURN_IF_ERROR(utils::InitTritonTensorInfo(outputs, output_tensors_, str_logs));
+  RETURN_IF_ERROR(
+      utils::InitTritonTensorInfo(outputs, output_tensors_, str_logs));
   if (logging_level_ >= 0) {
     LOG_MESSAGE(INT2TRITON_LOG_LEVEL(logging_level_), str_logs.c_str());
     str_logs.clear();
@@ -222,12 +229,11 @@ ModelState::InitModelState()
   max_batch_size_ = 64;
   max_sequence_idle_microseconds_ = 100000000;
   max_candidate_sequences_ = 1280;
-  pref_batch_sizes_ = { 64 };
+  pref_batch_sizes_ = {64};
   ort_ep_name_ = "trt";
   compute_precision_name_ = "fp16";
 
-  IGNORE_ERROR(
-      model_config_.MemberAsInt("max_batch_size", &max_batch_size_));
+  IGNORE_ERROR(model_config_.MemberAsInt("max_batch_size", &max_batch_size_));
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
       (std::string("Max batch size = ") + std::to_string(max_batch_size_))
@@ -276,19 +282,21 @@ ModelState::InitModelState()
 
   common::TritonJson::Value sequence_batching_oldest;
   CHECK_IF_ERROR(
-    sequence_batching.MemberAsObject("oldest", &sequence_batching_oldest),
-    parse_succeeded);
+      sequence_batching.MemberAsObject("oldest", &sequence_batching_oldest),
+      parse_succeeded);
   if (parse_succeeded) {
     IGNORE_ERROR(sequence_batching_oldest.MemberAsInt(
-      "max_candidate_sequences", &max_candidate_sequences_));
+        "max_candidate_sequences", &max_candidate_sequences_));
     LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO, (std::string("Max candidate sequences = ") +
-                              std::to_string(max_candidate_sequences_))
-                                 .c_str());
+        TRITONSERVER_LOG_INFO, (std::string("Max candidate sequences = ") +
+                                std::to_string(max_candidate_sequences_))
+                                   .c_str());
 
     common::TritonJson::Value pref_batch_sizes_array;
-    CHECK_IF_ERROR(sequence_batching_oldest.MemberAsArray(
-      "preferred_batch_size", &pref_batch_sizes_array), parse_succeeded);
+    CHECK_IF_ERROR(
+        sequence_batching_oldest.MemberAsArray(
+            "preferred_batch_size", &pref_batch_sizes_array),
+        parse_succeeded);
     if (parse_succeeded) {
       pref_batch_sizes_.clear();
       std::string pref_batch_sizes_str;
@@ -299,8 +307,9 @@ ModelState::InitModelState()
         pref_batch_sizes_str += std::to_string(d) + std::string(", ");
       }
       LOG_MESSAGE(
-        TRITONSERVER_LOG_INFO,
-        (std::string("Preferred batch sizes = ") + pref_batch_sizes_str).c_str());
+          TRITONSERVER_LOG_INFO,
+          (std::string("Preferred batch sizes = ") + pref_batch_sizes_str)
+              .c_str());
     }
   }
 
@@ -321,7 +330,8 @@ ModelState::InitModelState()
       (std::string("ort ep name = ") + ort_ep_name_).c_str());
 
   common::TritonJson::Value state_pairs;
-  CHECK_IF_ERROR(parameters.MemberAsObject("state_pairs", &state_pairs), parse_succeeded);
+  CHECK_IF_ERROR(
+      parameters.MemberAsObject("state_pairs", &state_pairs), parse_succeeded);
   if (parse_succeeded) {
     IGNORE_ERROR(state_pairs.MemberAsString("string_value", &state_pairs_));
   }
@@ -330,47 +340,69 @@ ModelState::InitModelState()
       (std::string("state tensor pairs = ") + state_pairs_).c_str());
 
   common::TritonJson::Value compute_prec;
-  CHECK_IF_ERROR(parameters.MemberAsObject("compute_precision", &compute_prec), parse_succeeded);
+  CHECK_IF_ERROR(
+      parameters.MemberAsObject("compute_precision", &compute_prec),
+      parse_succeeded);
   if (parse_succeeded) {
-    IGNORE_ERROR(compute_prec.MemberAsString("string_value", &compute_precision_name_));
+    IGNORE_ERROR(
+        compute_prec.MemberAsString("string_value", &compute_precision_name_));
   }
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
-      (std::string("compute precision name = ") + compute_precision_name_).c_str());
+      (std::string("compute precision name = ") + compute_precision_name_)
+          .c_str());
 
   common::TritonJson::Value metric_logging_frequency_seconds;
-  CHECK_IF_ERROR(parameters.MemberAsObject("metric_logging_frequency_seconds", &metric_logging_frequency_seconds), parse_succeeded);
+  CHECK_IF_ERROR(
+      parameters.MemberAsObject(
+          "metric_logging_frequency_seconds",
+          &metric_logging_frequency_seconds),
+      parse_succeeded);
   if (parse_succeeded) {
-    IGNORE_ERROR(metric_logging_frequency_seconds.MemberAsString("string_value", &metric_logging_frequency_seconds_));
+    IGNORE_ERROR(metric_logging_frequency_seconds.MemberAsString(
+        "string_value", &metric_logging_frequency_seconds_));
   }
   LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("Metric Logging Frequency = ") + metric_logging_frequency_seconds_).c_str());
+      TRITONSERVER_LOG_INFO, (std::string("Metric Logging Frequency = ") +
+                              metric_logging_frequency_seconds_)
+                                 .c_str());
 
   common::TritonJson::Value always_pad_to_max_batch;
-  CHECK_IF_ERROR(parameters.MemberAsObject("always_pad_to_max_batch", &always_pad_to_max_batch), parse_succeeded);
+  CHECK_IF_ERROR(
+      parameters.MemberAsObject(
+          "always_pad_to_max_batch", &always_pad_to_max_batch),
+      parse_succeeded);
   if (parse_succeeded) {
-    IGNORE_ERROR(always_pad_to_max_batch.MemberAsString("string_value", &always_pad_to_max_batch_));
+    IGNORE_ERROR(always_pad_to_max_batch.MemberAsString(
+        "string_value", &always_pad_to_max_batch_));
   }
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
-      (std::string("Always Pad to Max Batch = ") + always_pad_to_max_batch_).c_str());
+      (std::string("Always Pad to Max Batch = ") + always_pad_to_max_batch_)
+          .c_str());
 
   common::TritonJson::Value enable_trt_caching;
-  CHECK_IF_ERROR(parameters.MemberAsObject("enable_trt_caching", &enable_trt_caching), parse_succeeded);
+  CHECK_IF_ERROR(
+      parameters.MemberAsObject("enable_trt_caching", &enable_trt_caching),
+      parse_succeeded);
   if (parse_succeeded) {
-    IGNORE_ERROR(enable_trt_caching.MemberAsString("string_value", &enable_trt_caching_));
+    IGNORE_ERROR(enable_trt_caching.MemberAsString(
+        "string_value", &enable_trt_caching_));
   }
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
-      (std::string("Enable TRT Engine Caching = ") + enable_trt_caching_).c_str());
+      (std::string("Enable TRT Engine Caching = ") + enable_trt_caching_)
+          .c_str());
 
 #ifdef DEBUG_ERROR_INJECT
   common::TritonJson::Value error_inject_rate;
   std::string str_error_inject_rate;
-  CHECK_IF_ERROR(parameters.MemberAsObject("error_inject_rate", &error_inject_rate), parse_succeeded);
+  CHECK_IF_ERROR(
+      parameters.MemberAsObject("error_inject_rate", &error_inject_rate),
+      parse_succeeded);
   if (parse_succeeded) {
-    IGNORE_ERROR(error_inject_rate.MemberAsString("string_value", &str_error_inject_rate));
+    IGNORE_ERROR(error_inject_rate.MemberAsString(
+        "string_value", &str_error_inject_rate));
   }
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
@@ -381,23 +413,25 @@ ModelState::InitModelState()
       int64_t r = static_cast<int64_t>(std::stoll(str_error_inject_rate));
       LOG_MESSAGE(
           TRITONSERVER_LOG_INFO,
-          (std::string("Parsed Error Injection Rate = ") + std::to_string(r)).c_str());
+          (std::string("Parsed Error Injection Rate = ") + std::to_string(r))
+              .c_str());
       if (r < 0 || r >= 100) {
         throw std::invalid_argument("error_inject_rate");
       }
       error_inject_rate_ = r;
-    } catch (...) {
-      LOG_MESSAGE(TRITONSERVER_LOG_WARN, "Invalid value in 'error_inject_rate'.");
+    }
+    catch (...) {
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_WARN, "Invalid value in 'error_inject_rate'.");
     }
   }
-#endif // DEBUG_ERROR_INJECT
+#endif  // DEBUG_ERROR_INJECT
 
   // Initialize  environment...one environment per process
   // Environment maintains thread pools and other state info
   // TODO: Use only one environment for all model instances within a server
-  auto ort_log_level = logging_level_ > 0
-                                    ? ORT_LOGGING_LEVEL_VERBOSE
-                                    : ORT_LOGGING_LEVEL_WARNING;
+  auto ort_log_level = logging_level_ > 0 ? ORT_LOGGING_LEVEL_VERBOSE
+                                          : ORT_LOGGING_LEVEL_WARNING;
   mOrtEnv.reset(new Ort::Env(ort_log_level, "ONNX Stateful Model"));
 
   return nullptr;  // success
@@ -439,8 +473,7 @@ ModelInstanceState::Create(
     ModelInstanceState** state)
 {
   try {
-    *state = new ModelInstanceState(
-        model_state, triton_model_instance);
+    *state = new ModelInstanceState(model_state, triton_model_instance);
   }
   catch (const BackendModelInstanceException& ex) {
     RETURN_ERROR_IF_TRUE(
@@ -563,7 +596,8 @@ TRITONBACKEND_ModelInitialize(TRITONBACKEND_Model* model)
   RETURN_IF_ERROR(ModelState::Create(model, &model_state));
   RETURN_IF_ERROR(
       TRITONBACKEND_ModelSetState(model, reinterpret_cast<void*>(model_state)));
-  model_state->path_ = std::string(clocation) + std::string("/") + std::to_string(version);
+  model_state->path_ =
+      std::string(clocation) + std::string("/") + std::to_string(version);
 
 
   // One of the primary things to do in ModelInitialize is to examine
@@ -667,28 +701,34 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   if (model_state->enable_trt_caching_.compare("1") == 0)
     enable_trt_caching = true;
 
-  int64_t metricLoggingFreq = 0; // disabled
+  int64_t metricLoggingFreq = 0;  // disabled
   try {
     if (!model_state->metric_logging_frequency_seconds_.empty()) {
-      metricLoggingFreq = static_cast<int64_t>(std::stoll(model_state->metric_logging_frequency_seconds_));
+      metricLoggingFreq = static_cast<int64_t>(
+          std::stoll(model_state->metric_logging_frequency_seconds_));
     }
-  } catch (...) {
-    LOG_MESSAGE(TRITONSERVER_LOG_WARN, "Invalid value in 'metric_logging_frequency_seconds'.");
+  }
+  catch (...) {
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_WARN,
+        "Invalid value in 'metric_logging_frequency_seconds'.");
   }
 
   std::stringstream ss_logs;
   try {
     std::string err_msg = instance_state->trt_onnx_model_->Prepare(
-        ss_logs, model_state->mOrtEnv, 
-        full_onnx_file_name, model_state->state_pairs_, model_state->max_candidate_sequences_, device_id,
-        model_state->pref_batch_sizes_, model_state->input_tensors_,
-        model_state->output_tensors_, model_state->start_tensor_name_, useTrtEp, useFp16,
-        pad_to_max_batch, enable_trt_caching,
-        model_state->logging_level_, metricLoggingFreq, model_state->max_sequence_idle_microseconds_);
-    
+        ss_logs, model_state->mOrtEnv, full_onnx_file_name,
+        model_state->state_pairs_, model_state->max_candidate_sequences_,
+        device_id, model_state->pref_batch_sizes_, model_state->input_tensors_,
+        model_state->output_tensors_, model_state->start_tensor_name_, useTrtEp,
+        useFp16, pad_to_max_batch, enable_trt_caching,
+        model_state->logging_level_, metricLoggingFreq,
+        model_state->max_sequence_idle_microseconds_);
+
     std::string str_logs = ss_logs.str();
     if (model_state->logging_level_ >= 0 && !str_logs.empty()) {
-      if (str_logs.back() == '\n') str_logs.pop_back(); // remove last newline since Triton adds one
+      if (str_logs.back() == '\n')
+        str_logs.pop_back();  // remove last newline since Triton adds one
       LOG_MESSAGE(TRITONSERVER_LOG_INFO, str_logs.c_str());
     }
     RETURN_ERROR_IF_FALSE(
@@ -697,8 +737,11 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
     instance_state->inference_tasks_.resize(model_state->max_batch_size_);
   }
   catch (const std::bad_alloc& e) {
-    return TRITONSERVER_ErrorNew(TRITONSERVER_ERROR_INTERNAL, "MEMORY ALLOCATION ERROR:: "
-      "Please try to reduce the number of instances and/or the max_candidate_sequences.");
+    return TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_INTERNAL,
+        "MEMORY ALLOCATION ERROR:: "
+        "Please try to reduce the number of instances and/or the "
+        "max_candidate_sequences.");
   }
   catch (const std::exception& e) {
     return TRITONSERVER_ErrorNew(TRITONSERVER_ERROR_UNKNOWN, e.what());
@@ -717,7 +760,7 @@ TRITONBACKEND_ModelInstanceFinalize(TRITONBACKEND_ModelInstance* instance)
   RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceState(instance, &vstate));
   ModelInstanceState* instance_state =
       reinterpret_cast<ModelInstanceState*>(vstate);
-  
+
 #ifdef TRITON_ENABLE_GPU
   if (instance_state->Kind() == TRITONSERVER_INSTANCEGROUPKIND_GPU) {
     cudaSetDevice(instance_state->DeviceId());
@@ -757,7 +800,7 @@ TRITONBACKEND_ModelInstanceExecute(
   RETURN_IF_ERROR(TRITONBACKEND_ModelInstanceState(
       instance, reinterpret_cast<void**>(&instance_state)));
   ModelState* model_state = instance_state->StateForModel();
-  
+
 #ifdef TRITON_ENABLE_GPU
   if (instance_state->Kind() == TRITONSERVER_INSTANCEGROUPKIND_GPU) {
     cudaSetDevice(instance_state->DeviceId());
@@ -836,13 +879,14 @@ TRITONBACKEND_ModelInstanceExecute(
     int input_start = *reinterpret_cast<const int*>(input_buffer);
 
     GUARDED_RESPOND_IF_ERROR(
-            responses, r, TRITONBACKEND_RequestInput(request,
-            model_state->end_tensor_name_.c_str(), &input));
+        responses, r,
+        TRITONBACKEND_RequestInput(
+            request, model_state->end_tensor_name_.c_str(), &input));
     GUARDED_RESPOND_IF_ERROR(
-            responses, r,
-            TRITONBACKEND_InputBuffer(
-                input, 0, &input_buffer, &buffer_byte_size,
-                &input_memory_type, &input_memory_type_id));
+        responses, r,
+        TRITONBACKEND_InputBuffer(
+            input, 0, &input_buffer, &buffer_byte_size, &input_memory_type,
+            &input_memory_type_id));
     int input_end = *reinterpret_cast<const int*>(input_buffer);
 
     int i_tensor = 0;
@@ -924,10 +968,10 @@ TRITONBACKEND_ModelInstanceExecute(
     }
 #ifdef DEBUG_ERROR_INJECT
     // inject error before calling InferTasks()
-    if ((rand()%100) < model_state->error_inject_rate_) {
+    if ((rand() % 100) < model_state->error_inject_rate_) {
       instance_state->inference_tasks_[r].err_msg = "RANDOM ERROR";
     }
-#endif // DEBUG_ERROR_INJECT
+#endif  // DEBUG_ERROR_INJECT
   }
 
   uint64_t comp_start_ns = 0, comp_end_ns = 0;
@@ -937,19 +981,23 @@ TRITONBACKEND_ModelInstanceExecute(
     // Now that we set all input / output, we can do the inferencing
     std::stringstream ss_logs;
     err_msg = instance_state->trt_onnx_model_->InferTasks(
-        ss_logs, instance_state->inference_tasks_, request_count, 
-        comp_start_ns, comp_end_ns);
+        ss_logs, instance_state->inference_tasks_, request_count, comp_start_ns,
+        comp_end_ns);
 
     std::string str_logs = ss_logs.str();
     if (model_state->logging_level_ >= 0 && !str_logs.empty()) {
-      if (str_logs.back() == '\n') str_logs.pop_back(); // remove last newline since Triton adds one
+      if (str_logs.back() == '\n')
+        str_logs.pop_back();  // remove last newline since Triton adds one
       LOG_MESSAGE(TRITONSERVER_LOG_INFO, str_logs.c_str());
     }
   }
-  // For execptions, only set the err_msg since we need to send the responses for each request
+  // For execptions, only set the err_msg since we need to send the responses
+  // for each request
   catch (const std::bad_alloc& e) {
-    err_msg = std::string("MEMORY ALLOCATION ERROR during Inference:: "
-      "Please try to reduce the number of instances and/or the max_candidate_sequences.");
+    err_msg = std::string(
+        "MEMORY ALLOCATION ERROR during Inference:: "
+        "Please try to reduce the number of instances and/or the "
+        "max_candidate_sequences.");
   }
   catch (const std::exception& e) {
     err_msg += std::string("ERROR during Inference: ") + std::string(e.what());
@@ -963,13 +1011,13 @@ TRITONBACKEND_ModelInstanceExecute(
     auto error =
         TRITONSERVER_ErrorNew(TRITONSERVER_ERROR_INTERNAL, err_msg.c_str());
     /*
-        NOTE: It seems Triton expects an error ONLY IF we don't 
-        send/create response for any requests.  
-         - Since we already created the response objects, we have  
+        NOTE: It seems Triton expects an error ONLY IF we don't
+        send/create response for any requests.
+         - Since we already created the response objects, we have
            ownership of the requests/responses.
-         - If we return with an error at this point, Triton hangs at exit, 
-           thinking that it has the responsibility to send the responses. 
-         - Instead we send the same response for each request, 
+         - If we return with an error at this point, Triton hangs at exit,
+           thinking that it has the responsibility to send the responses.
+         - Instead we send the same response for each request,
            release the request objects, and then return a nullptr.
          - For individual request error, we need to send appropriate response
            for the particular requests. See next section.
@@ -991,21 +1039,22 @@ TRITONBACKEND_ModelInstanceExecute(
 
 
   for (uint32_t r = 0; r < request_count; ++r) {
-    // If we get to this point then there hasn't been any error for the whole batch and
-    // the response is complete (error or not) and we can send it. This is the last
-    // (and only) response that we are sending for the request so we
-    // must mark it FINAL. If there is an error when sending all we
-    // can do is log it.
-    TRITONSERVER_Error* err = nullptr; // success
-    if (!instance_state->inference_tasks_[r].err_msg.empty()) { // error
-      err = TRITONSERVER_ErrorNew(TRITONSERVER_ERROR_INTERNAL, 
-              instance_state->inference_tasks_[r].err_msg.c_str());
-      instance_state->inference_tasks_[r].err_msg.clear(); // clear the error for next time
+    // If we get to this point then there hasn't been any error for the whole
+    // batch and the response is complete (error or not) and we can send it.
+    // This is the last (and only) response that we are sending for the request
+    // so we must mark it FINAL. If there is an error when sending all we can do
+    // is log it.
+    TRITONSERVER_Error* err = nullptr;                           // success
+    if (!instance_state->inference_tasks_[r].err_msg.empty()) {  // error
+      err = TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_INTERNAL,
+          instance_state->inference_tasks_[r].err_msg.c_str());
+      instance_state->inference_tasks_[r]
+          .err_msg.clear();  // clear the error for next time
     }
     LOG_IF_ERROR(
         TRITONBACKEND_ResponseSend(
-            responses[r], TRITONSERVER_RESPONSE_COMPLETE_FINAL,
-            err),
+            responses[r], TRITONSERVER_RESPONSE_COMPLETE_FINAL, err),
         "failed sending response");
 
     // Done with requests...
@@ -1021,16 +1070,16 @@ TRITONBACKEND_ModelInstanceExecute(
     LOG_IF_ERROR(
         TRITONBACKEND_ModelInstanceReportStatistics(
             instance_state->TritonModelInstance(), request,
-            (responses[r] != nullptr && err == nullptr) /* success */, exec_start_ns,
-            comp_start_ns, comp_end_ns, exec_end_ns),
+            (responses[r] != nullptr && err == nullptr) /* success */,
+            exec_start_ns, comp_start_ns, comp_end_ns, exec_end_ns),
         "failed reporting request statistics");
 
-    // NOTE: Whether there was an error for individual requests or not, 
+    // NOTE: Whether there was an error for individual requests or not,
     // once we send the response, we need to release the request.
     LOG_IF_ERROR(
         TRITONBACKEND_RequestRelease(request, TRITONSERVER_REQUEST_RELEASE_ALL),
         "failed releasing request");
-    
+
     // Now delete the Error object
     if (err != nullptr) {
       TRITONSERVER_ErrorDelete(err);

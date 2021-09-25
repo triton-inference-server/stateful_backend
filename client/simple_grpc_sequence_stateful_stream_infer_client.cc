@@ -45,7 +45,7 @@ std::condition_variable cv_;
 
 #define FAIL_IF_ERR(X, MSG)                                        \
   {                                                                \
-    tc::Error err = (X);                                          \
+    tc::Error err = (X);                                           \
     if (!err.IsOk()) {                                             \
       std::cerr << "error: " << (MSG) << ": " << err << std::endl; \
       exit(1);                                                     \
@@ -101,7 +101,8 @@ StreamSend(
   std::shared_ptr<tc::InferInput> ivalue(input);
   FAIL_IF_ERR(ivalue->Reset(), "unable to reset 'INPUT'");
   FAIL_IF_ERR(
-          ivalue->AppendRaw(reinterpret_cast<uint8_t*>(value), input_size * sizeof(float)),
+      ivalue->AppendRaw(
+          reinterpret_cast<uint8_t*>(value), input_size * sizeof(float)),
       "unable to set data for 'INPUT'");
 
   std::vector<tc::InferInput*> inputs = {ivalue.get()};
@@ -112,36 +113,39 @@ StreamSend(
 
 std::vector<std::vector<std::vector<float>>>
 simulate_model(
-  const std::vector<std::vector<std::vector<float>>>& input_data, 
-  const int num_sequence, const int num_segment) {
-
+    const std::vector<std::vector<std::vector<float>>>& input_data,
+    const int num_sequence, const int num_segment)
+{
   /*
       'accumulate' model does the following:
         1. accumulates the input along the sequence dim
-        2. adds the accumulation to the internal states (initialized to 0 for start of sequence)
+        2. adds the accumulation to the internal states (initialized to 0 for
+     start of sequence)
         3. update the internal states with result of step 2
-        4. add the updated states to the original input which will be the final output
+        4. add the updated states to the original input which will be the final
+     output
    */
-  std::vector<std::vector<std::vector<float>>> output(num_sequence, std::vector<std::vector<float>>(num_segment));
+  std::vector<std::vector<std::vector<float>>> output(
+      num_sequence, std::vector<std::vector<float>>(num_segment));
   std::vector<float> states(STATE_DIM);
-  for (int seq_idx=0; seq_idx < num_sequence; ++seq_idx) {
+  for (int seq_idx = 0; seq_idx < num_sequence; ++seq_idx) {
     // initialize the states
-    for (int sti=0; sti < STATE_DIM; ++sti) states[sti] = 0.0f;
+    for (int sti = 0; sti < STATE_DIM; ++sti) states[sti] = 0.0f;
 
-    for (int seg_idx=0; seg_idx < num_segment; ++seg_idx) {
-      
-      for (int j=0; j<INPUT_DIM; ++j) {
+    for (int seg_idx = 0; seg_idx < num_segment; ++seg_idx) {
+      for (int j = 0; j < INPUT_DIM; ++j) {
         float sum = states[j];
         // Reduce
-        for (int i=0; i<SEGMENT_LEN; ++i) {
-          sum += input_data[seq_idx][seg_idx][j+i*INPUT_DIM];
+        for (int i = 0; i < SEGMENT_LEN; ++i) {
+          sum += input_data[seq_idx][seg_idx][j + i * INPUT_DIM];
         }
         // update states
         states[j] = sum;
         // calculate output
-        output[seq_idx][seg_idx].resize(SEGMENT_LEN*OUTPUT_DIM);
-        for (int i=0; i<SEGMENT_LEN; ++i) {
-          output[seq_idx][seg_idx][j+i*INPUT_DIM] = states[j] + input_data[seq_idx][seg_idx][j+i*INPUT_DIM];
+        output[seq_idx][seg_idx].resize(SEGMENT_LEN * OUTPUT_DIM);
+        for (int i = 0; i < SEGMENT_LEN; ++i) {
+          output[seq_idx][seg_idx][j + i * INPUT_DIM] =
+              states[j] + input_data[seq_idx][seg_idx][j + i * INPUT_DIM];
         }
       }
     }
@@ -230,13 +234,14 @@ main(int argc, char** argv)
 
   // initialize input
   const int input_size = INPUT_DIM * SEGMENT_LEN;
-  std::vector<std::vector<std::vector<float>>> input_data(NUM_SEQUENCE, std::vector<std::vector<float>>(NUM_SEGMENT));
-  for (int seg_idx=0; seg_idx<NUM_SEGMENT; ++seg_idx) {
-    for (int seq_idx=0; seq_idx<NUM_SEQUENCE; ++seq_idx) {
+  std::vector<std::vector<std::vector<float>>> input_data(
+      NUM_SEQUENCE, std::vector<std::vector<float>>(NUM_SEGMENT));
+  for (int seg_idx = 0; seg_idx < NUM_SEGMENT; ++seg_idx) {
+    for (int seq_idx = 0; seq_idx < NUM_SEQUENCE; ++seq_idx) {
       std::vector<float>& input_values = input_data[seq_idx][seg_idx];
       input_values.resize(input_size);
-      for (int i=0; i<input_size; ++i) {
-        input_values[i] = i + seg_idx*100 + seq_idx*1000;
+      for (int i = 0; i < input_size; ++i) {
+        input_values[i] = i + seg_idx * 100 + seq_idx * 1000;
       }
 
       // std::cout << sqi+sequence_id_offset << "_" << si << " (IN) :: ";
@@ -247,11 +252,12 @@ main(int argc, char** argv)
   }
 
   // send the requests
-  for (int seg_idx=0; seg_idx<NUM_SEGMENT; ++seg_idx) {
-    for (int seq_idx=0; seq_idx<NUM_SEQUENCE; ++seq_idx) {
+  for (int seg_idx = 0; seg_idx < NUM_SEGMENT; ++seg_idx) {
+    for (int seq_idx = 0; seq_idx < NUM_SEQUENCE; ++seq_idx) {
       StreamSend(
-        client, model_name, input_data[seq_idx][seg_idx].data(), seq_idx+sequence_id_offset,
-        seg_idx == 0, seg_idx == (NUM_SEGMENT-1), seg_idx);
+          client, model_name, input_data[seq_idx][seg_idx].data(),
+          seq_idx + sequence_id_offset, seg_idx == 0,
+          seg_idx == (NUM_SEGMENT - 1), seg_idx);
     }
   }
 
@@ -284,7 +290,8 @@ main(int argc, char** argv)
 
   // Extract data from the result
   const int output_size = OUTPUT_DIM * SEGMENT_LEN;
-  std::vector<std::vector<std::vector<float>>> output_data(NUM_SEQUENCE, std::vector<std::vector<float>>(NUM_SEGMENT));
+  std::vector<std::vector<std::vector<float>>> output_data(
+      NUM_SEQUENCE, std::vector<std::vector<float>>(NUM_SEGMENT));
   for (const auto& this_result : result_list) {
     auto err = this_result->RequestStatus();
     if (!err.IsOk()) {
@@ -292,13 +299,13 @@ main(int argc, char** argv)
       exit(1);
     }
     // Get pointers to the result returned...
-    float *output_raw_data;
+    float* output_raw_data;
     size_t output_byte_size;
     FAIL_IF_ERR(
         this_result->RawData(
             OUTPUT_NAME, (const uint8_t**)&output_raw_data, &output_byte_size),
         "unable to get result data for 'Output'");
-    if (output_byte_size != (sizeof(float)*output_size)) {
+    if (output_byte_size != (sizeof(float) * output_size)) {
       std::cerr << "error: received incorrect byte size for 'Output': "
                 << output_byte_size << std::endl;
       exit(1);
@@ -310,14 +317,13 @@ main(int argc, char** argv)
     uint64_t this_sequence_id =
         std::stoi(std::string(request_id, 0, request_id.find("_")));
     uint64_t sequence_idx = this_sequence_id - sequence_id_offset;
-    uint64_t segment_idx = 
-        std::stoi(std::string(request_id, request_id.find("_")+1));
-    if (sequence_idx >= 0 && sequence_idx < NUM_SEQUENCE 
-        && segment_idx >= 0 && segment_idx < NUM_SEGMENT) {
+    uint64_t segment_idx =
+        std::stoi(std::string(request_id, request_id.find("_") + 1));
+    if (sequence_idx >= 0 && sequence_idx < NUM_SEQUENCE && segment_idx >= 0 &&
+        segment_idx < NUM_SEGMENT) {
       output_data[sequence_idx][segment_idx].resize(output_size);
       std::copy(
-          output_raw_data,
-          output_raw_data + output_size,
+          output_raw_data, output_raw_data + output_size,
           std::begin(output_data[sequence_idx][segment_idx]));
 
       // std::cout << this_sequence_id << "_" << segment_idx << " :: ";
@@ -331,17 +337,19 @@ main(int argc, char** argv)
     }
   }
 
-  std::vector<std::vector<std::vector<float>>> expected_output = simulate_model(input_data, NUM_SEQUENCE, NUM_SEGMENT);
+  std::vector<std::vector<std::vector<float>>> expected_output =
+      simulate_model(input_data, NUM_SEQUENCE, NUM_SEGMENT);
 
-  for (int seq_idx=0; seq_idx < NUM_SEQUENCE; ++seq_idx) {
-    for (int seg_idx=0; seg_idx < NUM_SEGMENT; ++seg_idx) {
-      for (int i=0; i < output_size; ++i) {
-        if (output_data[seq_idx][seg_idx][i] != expected_output[seq_idx][seg_idx][i]) {
+  for (int seq_idx = 0; seq_idx < NUM_SEQUENCE; ++seq_idx) {
+    for (int seg_idx = 0; seg_idx < NUM_SEGMENT; ++seg_idx) {
+      for (int i = 0; i < output_size; ++i) {
+        if (output_data[seq_idx][seg_idx][i] !=
+            expected_output[seq_idx][seg_idx][i]) {
           std::cerr << "FAILED!" << std::endl;
-          std::cerr << "Sequence " << sequence_ids[seq_idx] << " Segment " << seg_idx
-                    << " : expected " << expected_output[seq_idx][seg_idx][i]
-                    << " , got " << output_data[seq_idx][seg_idx][i]
-                    << std::endl;
+          std::cerr << "Sequence " << sequence_ids[seq_idx] << " Segment "
+                    << seg_idx << " : expected "
+                    << expected_output[seq_idx][seg_idx][i] << " , got "
+                    << output_data[seq_idx][seg_idx][i] << std::endl;
           return 1;
         }
       }

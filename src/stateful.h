@@ -20,10 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-namespace triton {
-  namespace backend {
-    namespace stateful {
-      namespace utils {
+namespace triton { namespace backend { namespace stateful { namespace utils {
 TRITONSERVER_Error*
 InitTritonTensorInfo(
     common::TritonJson::Value& tensor_values,
