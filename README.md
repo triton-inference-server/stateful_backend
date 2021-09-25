@@ -84,3 +84,5 @@ It will build the backend, start the tritonserver with the backend, run a simple
 ## Limitations
 * Stateful backend only works with ONNX models
 * All tensor dimension expect from the batch dimension is fixed for a model instance
+* Only float (FP32) state tensors are supported
+* Model state reset tensor should be a boolean tensor

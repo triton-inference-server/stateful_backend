@@ -222,11 +222,6 @@ TrtOnnxModel::Prepare(
   if (mUseGpu) {
     std::string ort_status;
     if (mUseTrtEp) {
-#if 0
-      RETURN_IF_ERROR(
-          CheckOrtStatus(OrtSessionOptionsAppendExecutionProvider_Tensorrt(
-              session_options, mGpuId)));
-#else
       OrtTensorRTProviderOptions trt_options{
           mGpuId,
           1,
@@ -248,13 +243,7 @@ TrtOnnxModel::Prepare(
           0         // trt_force_sequential_engine_build
       };
       session_options.AppendExecutionProvider_TensorRT(trt_options);
-#endif
     }
-#if 0
-    RETURN_IF_ERROR(
-        CheckOrtStatus(OrtSessionOptionsAppendExecutionProvider_CUDA(
-            session_options, mGpuId)));
-#else
     OrtCUDAProviderOptions cuda_options{
         mGpuId,
         OrtCudnnConvAlgoSearch::EXHAUSTIVE,  // cudnn_conv_algo_search
@@ -266,7 +255,6 @@ TrtOnnxModel::Prepare(
         nullptr  // default_memory_arena_cfg
     };
     session_options.AppendExecutionProvider_CUDA(cuda_options);
-#endif
   }
 
   // Read the model description
