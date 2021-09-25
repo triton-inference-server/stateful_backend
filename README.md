@@ -30,7 +30,7 @@ During the model instance initialization, the stateful backend reserves CPU or G
    }
 ```
 
-   We also need a mapping between `CONTROL_SEQUENCE_START` to  `ResetSequence`
+3. We also need a mapping between `CONTROL_SEQUENCE_START` to  `ResetSequence`
    boolean input tensor to reset the values of state tensors. If the boolean input tensor is
    set to `true` for a batch, the input state values will be ignored and the model will use the 
    initial values of the states stored in the ONNX model file as constants. This mapping allows
@@ -49,7 +49,7 @@ During the model instance initialization, the stateful backend reserves CPU or G
 ```
     
 
-3. Incorporate the model file in Triton's Model Repository
+4. Incorporate the model file in Triton's Model Repository
 
 ```
         model_repository
