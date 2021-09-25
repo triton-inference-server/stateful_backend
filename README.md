@@ -1,7 +1,7 @@
 # Triton Stateful Backend
 ![alt text](stateful_backend.png)
 
-This repository contains code for the Stateful Backend for Triton Inference Server, where the models have matching input and output tensors for the states. The model states are I/O tensors; however, they are treated differently compared to standard I/O tensors. In particular, we do not need to communicate the state tensors between server and client. The server keeps the state tensors on CPU or GPU memory to restore them when a sequence id has an inference request again.
+This repository contains code for the Stateful Backend for Triton Inference Server, where the models have matching input and output tensors to keep track of the model states. The model states are input and output tensors. However, they are treated differently compared to standard input and output tensors. An output state tensor for a sequence id is passed as input state during the next inference execution of the same sequence id. In addition, we do not need to communicate the state tensors between server and client. The server keeps the state tensors for all active sequences on CPU or GPU memory to restore them when a sequence id has an inference request.
 
 The state tensors are provided in the model configuration file for an example model with two state tensors as below:
 ```
@@ -72,10 +72,23 @@ $ python3 scripts/test.py
 ```
 It will build the backend, start the tritonserver with the backend, run a simple client with the accumulate model.
 
+## Example Triton Model 
+models/accumulate folder contains a simple Triton model with state tensors and
+reset state boolean input. The ONNX file contains a simple accumulation graph
+where the input tensor are summed over the last dimension and added to a running
+sum. Stateful Backend keeps track of the running sum value for all sequences and
+provides the output state (the running sum) as input to the model when the
+corresponding sequence has an inference request.
+
+The model configuration file maps `CONTROL_SEQUENCE_START` signal to
+`ResetState` model input to initialize the state values with 0 constants stored
+in the ONNX model. The files and folder structure can be used
+to serve similar stateful ONNX models.
+
 ## Additional Features 
 * Stateful backend can do dynamic batching along any tensor dimension. The batch dimension should be marked with -1 in the model configuration file for the input and output tensors. 
 * The state tensors can only have one dynamic dimension that is assumed to be the batch dimension. 
-* The ONNX model should contain the initial values for the state tensors. `CONTROL_SEQUENCE_START` control input can be mapped to a model input tensor that signals when to reset the initial values of the states.
+* The ONNX model should contain the initial values for the state tensors. `CONTROL_SEQUENCE_START` control input can be mapped to a boolean model input tensor that signals when to reset the initial values of the states.
 * `ort_ep` model config parameter to choose the ORT backend between `trt` and `cuda`
 * `compute_precision` model config parameter to specify the precision for ORT `trt` EP
 * `always_pad_to_max_batch` model config parameter whether the batch dimension should be padded to max batch size for model execution (set value to `1`)
@@ -86,3 +99,4 @@ It will build the backend, start the tritonserver with the backend, run a simple
 * All tensor dimension expect from the batch dimension is fixed for a model instance
 * Only float (FP32) state tensors are supported
 * Model state reset tensor should be a boolean tensor
+* Only oldest sequence batching strategy is supported
