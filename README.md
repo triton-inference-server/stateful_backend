@@ -1,4 +1,4 @@
-#Triton Stateful Backend
+# Triton Stateful Backend
 
 This repository contains the Stateful Backend for Triton Inference Server. You can learn more about backends in the [backend repo](https://github.com/triton-inference-server/backend). Ask questions or report problems in the main Triton [issues page](https://github.com/triton-inference-server/server/issues).
 
@@ -18,7 +18,7 @@ The state tensors are provided in the model configuration file at the 'state_pai
 
 During the model instance initialization, the stateful backend reserves GPU (or CPU) memory as large as `max_candidate_sequences * sum_of_all_state_tensor_sizes` to store  model state tensors. 
 
-##How to use?
+## How to use?
 1. [Build](#how-to-build?) the backend. Run Triton server docker image, and copy the backend files to the triton [backend folder](https://github.com/triton-inference-server/backend#can-i-add-or-remove-a-backend-to-an-existing-triton-installation). Delete existing onnxruntime backend and set the LD_LIBRARY_PATH variable:
  
 ```
@@ -76,8 +76,8 @@ tritonserver --grpc-port 8005 --model-repository /workspace/stateful_backend/mod
 
 ```
 
-##How to build?
-###How to build the backend?
+## How to build?
+### How to build the backend?
 Run:
 ```
 $ python3 ./build.py
@@ -103,14 +103,14 @@ $ make -j
 $ make install
 ```
 
-###How to build and test the backend?
+### How to build and test the backend?
 Run: 
 ```
 $ python3 scripts/test.py
 ```
 It will build the backend, start the tritonserver with the backend, run a simple client with the accumulate model.
 
-##Example Triton Model 
+## Example Triton Model 
 models/accumulate folder contains a simple Triton model with state tensors and
 reset state boolean input. The ONNX file contains a simple accumulation graph
 where the input tensor are summed over the last dimension and added to a running
@@ -123,7 +123,7 @@ The model configuration file maps `CONTROL_SEQUENCE_START` signal to
 in the ONNX model. The files and folder structure can be used
 to serve similar stateful ONNX models.
 
-##Additional Features 
+## Additional Features 
 * Stateful backend can do dynamic batching along any tensor dimension. The batch dimension should be marked with -1 in the model configuration file for the input and output tensors. 
 * The state tensors can only have one dynamic dimension that is assumed to be the batch dimension. 
 * The ONNX model should contain the initial values for the state tensors. `CONTROL_SEQUENCE_START` control input can be mapped to a boolean model input tensor that signals when to reset the initial values of the states.
@@ -132,7 +132,7 @@ to serve similar stateful ONNX models.
 * `always_pad_to_max_batch` model config parameter whether the batch dimension should be padded to max batch size for model execution (set value to `1`)
 
 
-##Limitations
+## Limitations
 * Stateful backend only works with ONNX models
 * All tensor dimension expect from the batch dimension is fixed for a model instance
 * Only float (FP32) state tensors are supported
