@@ -1,7 +1,11 @@
 # Triton Stateful Backend
+
+This repository contains the Stateful Backend for Triton Inference Server. The backend code automatically manages the input and output states of a model. The states are associated with a sequence id and need to be tracked for inference requests associated with the same sequence id. The backend handles ONNX models, however, the idea and backend code can be extended to other model types supported by Triton. 
+
+
 ![alt text](stateful_backend.png)
 
-This repository contains code for the Stateful Backend for Triton Inference Server, where the models have matching input and output tensors to keep track of the model states. The model states are input and output tensors. However, they are treated differently compared to standard input and output tensors. An output state tensor for a sequence id is passed as input state during the next inference execution of the same sequence id. In addition, we do not need to communicate the state tensors between server and client. The server keeps the state tensors for all active sequences on CPU or GPU memory to restore them when a sequence id has an inference request.
+Above model has matching input and output tensors. The model state tensors are treated differently compared to standard input and output tensors. An output state tensor for a sequence id is passed as input state during the next inference execution of the same sequence id. In addition, we do not need to communicate the state tensors between server and client. The server keeps the state tensors for all active sequences on CPU or GPU memory to restore them when a sequence id has an inference request.
 
 The state tensors are provided in the model configuration file. For the example model in models/accumulate, the state tensors are specified as below:
 ```
@@ -12,6 +16,8 @@ The state tensors are provided in the model configuration file. For the example 
 ```
 
 During the model instance initialization, the stateful backend reserves CPU or GPU memory as large as `max_candidate_sequences * sum_of_all_state_tensor_sizes` to store and restore the model state tensors. 
+
+You can learn more about backends in the [backend repo](https://github.com/triton-inference-server/backend). Ask questions or report problems in the main Triton [issues page](https://github.com/triton-inference-server/server/issues).
 
 ## How to use?
 1. Create an ONNX model that exposes input and output state tensors. The model
