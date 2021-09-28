@@ -65,7 +65,7 @@ tritonserver --grpc-port 8005 --model-repository /workspace/stateful_backend/mod
 ```
     
 
-4. Incorporate the model file in Triton's Model Repository
+5. Incorporate the model file in Triton's Model Repository
 
 ```
         model_repository
