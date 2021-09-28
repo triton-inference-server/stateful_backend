@@ -19,12 +19,23 @@ The state tensors are provided in the model configuration file at the 'state_pai
 During the model instance initialization, the stateful backend reserves GPU (or CPU) memory as large as `max_candidate_sequences * sum_of_all_state_tensor_sizes` to store  model state tensors. 
 
 ## How to use?
-1. Create an ONNX model that exposes input and output state tensors. The model
+1. [Build](#how-to-build?) the backend. Run Triton server docker image, and copy the backend files to the triton [backend folder](https://github.com/triton-inference-server/backend#can-i-add-or-remove-a-backend-to-an-existing-triton-installation). Delete existing onnxruntime backend and set the LD_LIBRARY_PATH variable:
+ 
+```
+docker run --gpus all -it --rm --shm-size=1g --ulimit memlock=-1 --ulimit stack=67108864 -p8005:8005 -p8006:8006 -p8007:8007 -v${PWD}:/workspace/stateful_backend nvcr.io/nvidia/tritonserver:21.08-py3
+rm -rf /opt/tritonserver/backends/onnxruntime # Remove existing ORT backend to avoid having two copies
+cp  -R /workspace/stateful_backend/build/install/backends/stateful ./backends/ # Copy the stateful backend
+export LD_LIBRARY_PATH=/workspace/stateful_backend/build/ort-lib/ # Add ORT to the LD_LIBRARY_PATH
+tritonserver --grpc-port 8005 --model-repository /workspace/stateful_backend/models/ # Run the triton inference server
+```
+
+ 
+2. Create an ONNX model that exposes input and output state tensors. The model
    should also has a mechanism to reset the initial values of state tensors for
    the beginning of the sequence. See the example model for a reference.
  
 
-2. Create a model config file that matches the ONNX model. The model config file
+3. Create a model config file that matches the ONNX model. The model config file
    only needs to have the standard Input and Outputs excluding the state tensors
    listed. The state pairs are listed as below for the example ONNX model:
 
@@ -35,7 +46,7 @@ During the model instance initialization, the stateful backend reserves GPU (or 
    }
 ```
 
-3. We also need a mapping between `CONTROL_SEQUENCE_START` to  `ResetSequence`
+4. We also need a mapping between `CONTROL_SEQUENCE_START` to  `ResetSequence`
    boolean input tensor to reset the values of state tensors. If the boolean input tensor is
    set to `true` for a batch, the input state values will be ignored and the model will use the 
    initial values of the states stored in the ONNX model file as constants. This mapping allows
