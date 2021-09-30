@@ -355,9 +355,12 @@ ModelState::InitModelState()
           .c_str());
 
   common::TritonJson::Value store_states;
-  CHECK_IF_ERROR(parameters.MemberAsObject("store_states_as_fp16", &store_states), parse_succeeded);
+  CHECK_IF_ERROR(
+      parameters.MemberAsObject("store_states_as_fp16", &store_states),
+      parse_succeeded);
   if (parse_succeeded) {
-    IGNORE_ERROR(store_states.MemberAsString("string_value", &store_states_as_fp16_));
+    IGNORE_ERROR(
+        store_states.MemberAsString("string_value", &store_states_as_fp16_));
   }
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
@@ -703,7 +706,7 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   bool useFp16 = false;
   if (model_state->compute_precision_name_.compare("fp16") == 0)
     useFp16 = true;
-  
+
   bool store_states_as_fp16 = false;
   if (model_state->store_states_as_fp16_.compare("1") == 0)
     store_states_as_fp16 = true;

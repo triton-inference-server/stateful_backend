@@ -120,22 +120,22 @@ append_to_trtexec_string(
 }
 
 static inline std::unique_ptr<samplesCommon::ManagedBufferInternal>
-allocate_tensor(const nvinfer1::Dims& dim, const bool use_gpu, const bool alloc_fp16)
+allocate_tensor(
+    const nvinfer1::Dims& dim, const bool use_gpu, const bool alloc_fp16)
 {
   std::unique_ptr<samplesCommon::ManagedBufferInternal> buffer;
   try {
-    buffer.reset(
-        new samplesCommon::ManagedBufferInternal{
-          alloc_fp16 ? nvinfer1::DataType::kHALF : nvinfer1::DataType::kFLOAT,
-          alloc_fp16 ? nvinfer1::DataType::kHALF : nvinfer1::DataType::kFLOAT});
+    buffer.reset(new samplesCommon::ManagedBufferInternal{
+        alloc_fp16 ? nvinfer1::DataType::kHALF : nvinfer1::DataType::kFLOAT,
+        alloc_fp16 ? nvinfer1::DataType::kHALF : nvinfer1::DataType::kFLOAT});
     buffer->resize(dim, use_gpu);
   }
-  catch(const std::exception& e)
-  {
-    std::cerr << "ERROR: Couldn't allocate memory for state tensors. " << e.what() << '\n';
+  catch (const std::exception& e) {
+    std::cerr << "ERROR: Couldn't allocate memory for state tensors. "
+              << e.what() << '\n';
     throw;
   }
-  
+
   return buffer;
 }
 
@@ -168,9 +168,8 @@ TrtOnnxModel::Prepare(
     const std::vector<TritonTensorInfo>& input_tensors,
     const std::vector<TritonTensorInfo>& output_tensors,
     std::string reset_tensor_name, bool useTrtEp, bool useFp16,
-    bool store_states_as_fp16,
-    bool pad_to_max_batch, bool enable_trt_caching, int64_t logLevel,
-    int64_t metricLoggingFreq, int64_t seq_timeout_us)
+    bool store_states_as_fp16, bool pad_to_max_batch, bool enable_trt_caching,
+    int64_t logLevel, int64_t metricLoggingFreq, int64_t seq_timeout_us)
 {
   mLogLevel = logLevel;
   std::stringstream ss_null;  // use a local stream to consume the logs
@@ -733,7 +732,8 @@ TrtOnnxModel::Prepare(
     if (maxNbConnections != -1) {
       auto dimsMaxCon = iTensor.mDim;
       dimsMaxCon.d[iTensor.mBatchDim] = maxNbConnections;
-      mStoredStates.emplace_back(allocate_tensor(dimsMaxCon, mUseGpu, mStoreStatesAsFp16));
+      mStoredStates.emplace_back(
+          allocate_tensor(dimsMaxCon, mUseGpu, mStoreStatesAsFp16));
       iTensor.mStoreBuffer = mStoredStates.back()->data(mUseGpu);
     }
     // find the matching output tensor
@@ -985,16 +985,15 @@ TrtOnnxModel::storeStates_CPU_FP32(
     size_t sizeX = mBufferSizeXHost[i];
     size_t sizeY = mBufferSizeYHost[i];
     for (int j = 0; j < batchSize; ++j) {
-      if (!inferenceTasks[j].err_msg.empty()) continue; // don't store if error
-      if (mStoreIdHost[j] < 0) continue; // no empty slots
+      if (!inferenceTasks[j].err_msg.empty())
+        continue;  // don't store if error
+      if (mStoreIdHost[j] < 0)
+        continue;  // no empty slots
       for (size_t ix = 0; ix < sizeX; ++ix) {
         for (size_t iy = 0; iy < sizeY; ++iy) {
-          storageBuffer
-              [mStoreIdHost[j] * sizeX * sizeY 
-              + ix * sizeY + iy] = 
-                  mOutputStateBufferHost[i]
-                                        [ix * batchStride * sizeY 
-                                        + j * sizeY + iy];
+          storageBuffer[mStoreIdHost[j] * sizeX * sizeY + ix * sizeY + iy] =
+              mOutputStateBufferHost[i]
+                                    [ix * batchStride * sizeY + j * sizeY + iy];
         }
       }
     }
@@ -1010,15 +1009,14 @@ TrtOnnxModel::restoreStates_CPU_FP32(
     size_t sizeX = mBufferSizeXHost[i];
     size_t sizeY = mBufferSizeYHost[i];
     for (int j = 0; j < batchSize; ++j) {
-      if (!inferenceTasks[j].err_msg.empty()) continue; // don't restore if error
-      if (mStoreIdHost[j] < 0) continue; // no empty slots
+      if (!inferenceTasks[j].err_msg.empty())
+        continue;  // don't restore if error
+      if (mStoreIdHost[j] < 0)
+        continue;  // no empty slots
       for (size_t ix = 0; ix < sizeX; ++ix) {
         for (size_t iy = 0; iy < sizeY; ++iy) {
-          mInputStateBufferHost[i]
-                                [ix * batchStride * sizeY 
-                                + j * sizeY + iy] =
-                                    storageBuffer[mStoreIdHost[j] * sizeX * sizeY
-                                                 + ix * sizeY + iy];
+          mInputStateBufferHost[i][ix * batchStride * sizeY + j * sizeY + iy] =
+              storageBuffer[mStoreIdHost[j] * sizeX * sizeY + ix * sizeY + iy];
         }
       }
     }
@@ -1034,16 +1032,16 @@ TrtOnnxModel::storeStates_CPU_FP16(
     size_t sizeX = mBufferSizeXHost[i];
     size_t sizeY = mBufferSizeYHost[i];
     for (int j = 0; j < batchSize; ++j) {
-      if (!inferenceTasks[j].err_msg.empty()) continue; // don't store if error
-      if (mStoreIdHost[j] < 0) continue; // no empty slots
+      if (!inferenceTasks[j].err_msg.empty())
+        continue;  // don't store if error
+      if (mStoreIdHost[j] < 0)
+        continue;  // no empty slots
       for (size_t ix = 0; ix < sizeX; ++ix) {
         for (size_t iy = 0; iy < sizeY; ++iy) {
-          storageBuffer
-              [mStoreIdHost[j] * sizeX * sizeY 
-              + ix * sizeY + iy] = __float2half(
-                  mOutputStateBufferHost[i]
-                                        [ix * batchStride * sizeY 
-                                        + j * sizeY + iy]);
+          storageBuffer[mStoreIdHost[j] * sizeX * sizeY + ix * sizeY + iy] =
+              __float2half(mOutputStateBufferHost[i]
+                                                 [ix * batchStride * sizeY +
+                                                  j * sizeY + iy]);
         }
       }
     }
@@ -1059,15 +1057,16 @@ TrtOnnxModel::restoreStates_CPU_FP16(
     size_t sizeX = mBufferSizeXHost[i];
     size_t sizeY = mBufferSizeYHost[i];
     for (int j = 0; j < batchSize; ++j) {
-      if (!inferenceTasks[j].err_msg.empty()) continue; // don't restore if error
-      if (mStoreIdHost[j] < 0) continue; // no empty slots
+      if (!inferenceTasks[j].err_msg.empty())
+        continue;  // don't restore if error
+      if (mStoreIdHost[j] < 0)
+        continue;  // no empty slots
       for (size_t ix = 0; ix < sizeX; ++ix) {
         for (size_t iy = 0; iy < sizeY; ++iy) {
-          mInputStateBufferHost[i]
-                                [ix * batchStride * sizeY 
-                                + j * sizeY + iy] = __half2float(
-                                    storageBuffer[mStoreIdHost[j] * sizeX * sizeY
-                                                 + ix * sizeY + iy]);
+          mInputStateBufferHost[i][ix * batchStride * sizeY + j * sizeY + iy] =
+              __half2float(
+                  storageBuffer
+                      [mStoreIdHost[j] * sizeX * sizeY + ix * sizeY + iy]);
         }
       }
     }
@@ -1081,22 +1080,19 @@ TrtOnnxModel::storeStates(
   if (mUseGpu) {
     if (mStoreStatesAsFp16) {
       launchStoreGPUKernel_FP16(
-          reinterpret_cast<__half**>(mStorageBufferDevice), mOutputStateBufferDevice, mBufferSizeXDevice,
-          mBufferSizeYDevice, mNumStates, mStoreIdDevice, batchSize, batchStride,
-          mCudaStreamExe);
-    }
-    else {
+          reinterpret_cast<__half**>(mStorageBufferDevice),
+          mOutputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
+          mNumStates, mStoreIdDevice, batchSize, batchStride, mCudaStreamExe);
+    } else {
       launchStoreGPUKernel_FP32(
-          reinterpret_cast<float**>(mStorageBufferDevice), mOutputStateBufferDevice, mBufferSizeXDevice,
-          mBufferSizeYDevice, mNumStates, mStoreIdDevice, batchSize, batchStride,
-          mCudaStreamExe);
+          reinterpret_cast<float**>(mStorageBufferDevice),
+          mOutputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
+          mNumStates, mStoreIdDevice, batchSize, batchStride, mCudaStreamExe);
     }
-  }
-  else {
+  } else {
     if (mStoreStatesAsFp16) {
       storeStates_CPU_FP16(inferenceTasks, batchSize, batchStride);
-    }
-    else {
+    } else {
       storeStates_CPU_FP32(inferenceTasks, batchSize, batchStride);
     }
   }
@@ -1109,22 +1105,19 @@ TrtOnnxModel::restoreStates(
   if (mUseGpu) {
     if (mStoreStatesAsFp16) {
       launchRestoreGPUKernel_FP16(
-          reinterpret_cast<__half**>(mStorageBufferDevice), mInputStateBufferDevice, mBufferSizeXDevice,
-          mBufferSizeYDevice, mNumStates, mStoreIdDevice, batchSize, batchStride,
-          mCudaStreamExe);
-    }
-    else {
+          reinterpret_cast<__half**>(mStorageBufferDevice),
+          mInputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
+          mNumStates, mStoreIdDevice, batchSize, batchStride, mCudaStreamExe);
+    } else {
       launchRestoreGPUKernel_FP32(
-          reinterpret_cast<float**>(mStorageBufferDevice), mInputStateBufferDevice, mBufferSizeXDevice,
-          mBufferSizeYDevice, mNumStates, mStoreIdDevice, batchSize, batchStride,
-          mCudaStreamExe);
+          reinterpret_cast<float**>(mStorageBufferDevice),
+          mInputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
+          mNumStates, mStoreIdDevice, batchSize, batchStride, mCudaStreamExe);
     }
-  }
-  else {
+  } else {
     if (mStoreStatesAsFp16) {
       restoreStates_CPU_FP16(inferenceTasks, batchSize, batchStride);
-    }
-    else {
+    } else {
       restoreStates_CPU_FP32(inferenceTasks, batchSize, batchStride);
     }
   }

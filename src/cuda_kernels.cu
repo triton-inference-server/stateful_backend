@@ -90,7 +90,8 @@ storeStates_FP32(
   int stateId = blockIdx.x;
   int batchId = blockIdx.y;
   int storeId = storeids[batchId];
-  if (storeId < 0) return; // no empty slots
+  if (storeId < 0)
+    return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
   float* pDst = storage[stateId] + storeId * sizeX * sizeY;
@@ -112,7 +113,8 @@ restoreStates_FP32(
   int stateId = blockIdx.x;
   int batchId = blockIdx.y;
   int storeId = storeids[batchId];
-  if (storeId < 0) return; // no empty slots
+  if (storeId < 0)
+    return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
   float* pSrc = storage[stateId] + storeId * sizeX * sizeY;
@@ -134,7 +136,8 @@ storeStates_FP16(
   int stateId = blockIdx.x;
   int batchId = blockIdx.y;
   int storeId = storeids[batchId];
-  if (storeId < 0) return; // no empty slots
+  if (storeId < 0)
+    return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
   __half* pDst = storage[stateId] + storeId * sizeX * sizeY;
@@ -156,7 +159,8 @@ restoreStates_FP16(
   int stateId = blockIdx.x;
   int batchId = blockIdx.y;
   int storeId = storeids[batchId];
-  if (storeId < 0) return; // no empty slots
+  if (storeId < 0)
+    return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
   __half* pSrc = storage[stateId] + storeId * sizeX * sizeY;
