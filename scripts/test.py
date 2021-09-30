@@ -32,6 +32,7 @@ import build_backend
 g_server_started = False
 g_server_exited = False
 g_server_thread = None
+g_server_crashed = False
 
 TRITON_VOLUMES = {}
 TRITON_VOL_SRC = ''
@@ -46,15 +47,18 @@ def setup_env(root_dir):
 def run_server_thread_func(cnt):
   status = cnt.exec_run(stateful_config.TRITON_SERVER_CMD, stream=True, environment=stateful_config.TRITON_SERVER_ENV)
   outgen = status[1]
-  global g_server_started, g_server_exited
-  g_server_started = g_server_exited = False
+  global g_server_started, g_server_exited, g_server_crashed
+  g_server_started = g_server_exited = g_server_crashed = False
+  l_server_started = False
   for ln in outgen:
     print(ln.decode(), end='')
     if ln.decode().find("Started GRPCInferenceService") >= 0:
-      g_server_started = True
+      g_server_started = l_server_started = True
     if ln.decode().find("successfully unloaded") >= 0:
       g_server_exited = True
       break
+  if not l_server_started: # server didn't start for some reason
+    g_server_crashed = True
   return
 
 def start_server(scnt):
@@ -65,6 +69,9 @@ def start_server(scnt):
   # wait until server fully started
   while not g_server_started:
     time.sleep(1)
+    if g_server_crashed:
+      print("Server didn't start properly. Exiting ...", file=sys.stderr)
+      exit(1)
   g_server_started = False
   return
 

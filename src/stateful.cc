@@ -112,6 +112,7 @@ class ModelState : public BackendModel {
   std::string onnx_file_name_;
   std::string ort_ep_name_;
   std::string compute_precision_name_;
+  std::string store_states_as_fp16_;
   std::string state_pairs_;
   int64_t logging_level_;
   std::string metric_logging_frequency_seconds_;
@@ -232,6 +233,7 @@ ModelState::InitModelState()
   pref_batch_sizes_ = {64};
   ort_ep_name_ = "trt";
   compute_precision_name_ = "fp16";
+  store_states_as_fp16_ = "0";
 
   IGNORE_ERROR(model_config_.MemberAsInt("max_batch_size", &max_batch_size_));
   LOG_MESSAGE(
@@ -351,6 +353,15 @@ ModelState::InitModelState()
       TRITONSERVER_LOG_INFO,
       (std::string("compute precision name = ") + compute_precision_name_)
           .c_str());
+
+  common::TritonJson::Value store_states;
+  CHECK_IF_ERROR(parameters.MemberAsObject("store_states_as_fp16", &store_states), parse_succeeded);
+  if (parse_succeeded) {
+    IGNORE_ERROR(store_states.MemberAsString("string_value", &store_states_as_fp16_));
+  }
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("store states as FP16 = ") + store_states_as_fp16_).c_str());
 
   common::TritonJson::Value metric_logging_frequency_seconds;
   CHECK_IF_ERROR(
@@ -692,6 +703,10 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   bool useFp16 = false;
   if (model_state->compute_precision_name_.compare("fp16") == 0)
     useFp16 = true;
+  
+  bool store_states_as_fp16 = false;
+  if (model_state->store_states_as_fp16_.compare("1") == 0)
+    store_states_as_fp16 = true;
 
   bool pad_to_max_batch = false;
   if (model_state->always_pad_to_max_batch_.compare("1") == 0)
@@ -721,7 +736,7 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
         model_state->state_pairs_, model_state->max_candidate_sequences_,
         device_id, model_state->pref_batch_sizes_, model_state->input_tensors_,
         model_state->output_tensors_, model_state->start_tensor_name_, useTrtEp,
-        useFp16, pad_to_max_batch, enable_trt_caching,
+        useFp16, store_states_as_fp16, pad_to_max_batch, enable_trt_caching,
         model_state->logging_level_, metricLoggingFreq,
         model_state->max_sequence_idle_microseconds_);
 

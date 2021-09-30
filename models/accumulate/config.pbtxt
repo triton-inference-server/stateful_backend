@@ -101,17 +101,29 @@ parameters [
     value: { string_value: "fp32" }
   },
   {
+    key: "store_states_as_fp16"
+    # Store the states as FP16 to reduce memory usage (may impact accuracy)
+    # Default: 0, disabled
+    value: { string_value: "0" }
+  },
+  {
     key: "metric_logging_frequency_seconds"
     # Average/Max batch size logging frequency in seconds::
     # Default: 0, disabled
     value: { string_value: "2" }
   },
   {
+    key: "always_pad_to_max_batch"
+    # Always pad current batch to max batch size
+    #  Default: 0, disabled
+    value: { string_value: "0" }
+  },
+  {
     key: "logging_level"
     # Metrics report logging::
     #  NONE: No logs from model runner.
     #  INFO: Only Sequence Reset
-    #  VERBOSE: old behavior (INFO + all metrics)
+    #  VERBOSE: INFO + all metrics
     value: { string_value: "VERBOSE" }
   }
 ]

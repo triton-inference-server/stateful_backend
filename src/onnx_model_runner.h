@@ -285,10 +285,10 @@ class TrtOnnxModel {
       int gpuId, std::vector<int64_t>& pref_batch_sizes,
       const std::vector<TritonTensorInfo>& input_tensors,
       const std::vector<TritonTensorInfo>& output_tensors,
-      std::string reset_tensor_name, bool useTrtEp = true, bool useFp16 = false,
-      bool pad_to_max_batch = false, bool enable_trt_caching = false,
-      int64_t logLevel = 1, int64_t metricLoggingFreq = 0,
-      int64_t sequnce_timeout_microseconds = INT64_MAX);
+      std::string reset_tensor_name, bool useTrtEp = true, 
+      bool useFp16 = false, bool store_states_as_fp16 = false, 
+      bool pad_to_max_batch = false, bool enable_trt_caching = false, int64_t logLevel = 1, 
+      int64_t metricLoggingFreq = 0, int64_t sequnce_timeout_microseconds = INT64_MAX);
 
   // Runs inference for multiple tasks for Triton backend
   std::string InferTasks(
@@ -328,6 +328,19 @@ class TrtOnnxModel {
   void setBindings(int batchsize, Ort::IoBinding& iobindings);
   int GetNumSegments();
 
+  void storeStates_CPU_FP32(
+      std::vector<InferenceTask>& inferenceTasks, int batchSize,
+      int batchStride);
+  void restoreStates_CPU_FP32(
+      std::vector<InferenceTask>& inferenceTasks, int batchSize,
+      int batchStride);
+  void storeStates_CPU_FP16(
+      std::vector<InferenceTask>& inferenceTasks, int batchSize,
+      int batchStride);
+  void restoreStates_CPU_FP16(
+      std::vector<InferenceTask>& inferenceTasks, int batchSize,
+      int batchStride);
+
   void storeStates(
       std::vector<InferenceTask>& inferenceTasks, int batchSize,
       int batchStride);
@@ -366,6 +379,7 @@ class TrtOnnxModel {
   int mGpuId{-1};
   bool mUseGpu{true};
   bool mUseTrtEp{true};
+  bool mStoreStatesAsFp16{false};
   std::string mDeviceBindingString;
 
   int mBatchDimMin{1};
@@ -376,14 +390,14 @@ class TrtOnnxModel {
   cudaStream_t mCudaStreamExe;
   cudaStream_t mCudaStreamCpy;
 
-  float** mStorageBufferDevice{nullptr};
+  void** mStorageBufferDevice{nullptr}; // either float or __half
   float** mInputStateBufferDevice{nullptr};
   float** mOutputStateBufferDevice{nullptr};
   int* mBufferSizeXDevice{nullptr};
   int* mBufferSizeYDevice{nullptr};
   int* mStoreIdDevice{nullptr};
 
-  std::vector<float*> mStorageBufferHost;
+  std::vector<void*> mStorageBufferHost; // either float or __half
   std::vector<float*> mInputStateBufferHost;
   std::vector<float*> mOutputStateBufferHost;
   std::vector<int> mBufferSizeXHost;

@@ -8,7 +8,7 @@ The backend code automatically manages the input and output states of a model. T
 
 The example stateful model above has matching input and output tensors representing the model states. An output state tensor for a sequence id is passed as the input state during the next inference execution of the same sequence id. Therefore, we do not need to communicate the state tensors between server and client, and they can be kept on the GPU (or CPU) memory for GPU (or CPU) execution. The backend code stores the state tensors for all active sequences on the GPU (or CPU) memory and passes the stored state tensors as model input when the sequence id associated with the state tensors has an inference request.
 
-The state tensors are provided in the model configuration file at the 'state_pairs' section. For the example model in models/accumulate, the state tensor input and output pairs are specified as below:
+The state tensors are provided in the model configuration file at the 'state_pairs' section. For the example model in models/accumulate, the state tensor input and output pairs are specified in the `parameters` section as below:
 ```
    {
     key: "state_pairs"
@@ -31,13 +31,13 @@ tritonserver --grpc-port 8005 --model-repository /workspace/stateful_backend/mod
 
  
 2. Create an ONNX model that exposes input and output state tensors. The model
-   should also has a mechanism to reset the initial values of state tensors for
+   should also have a mechanism to reset the initial values of state tensors for
    the beginning of the sequence. See the example model for a reference.
  
 
 3. Create a model config file that matches the ONNX model. The model config file
    only needs to have the standard Input and Outputs excluding the state tensors
-   listed. The state pairs are listed as below for the example ONNX model:
+   listed. The state pairs are listed in the `parameters` section. For the example ONNX model:
 
 ```
    {
@@ -48,7 +48,7 @@ tritonserver --grpc-port 8005 --model-repository /workspace/stateful_backend/mod
 
 4. We also need a mapping between `CONTROL_SEQUENCE_START` to  `ResetSequence`
    boolean input tensor to reset the values of state tensors. If the boolean input tensor is
-   set to `true` for a batch, the input state values will be ignored and the model will use the 
+   set to `true` for an inference request, the input state values will be ignored and the model will use the 
    initial values of the states stored in the ONNX model file as constants. This mapping allows
    the stateful backend to reset the state tensor values for the start of a sequence. 
 
@@ -118,7 +118,7 @@ provides the output state (the running sum) as input to the model when the
 corresponding sequence has an inference request.
 
 The model configuration file maps `CONTROL_SEQUENCE_START` signal to
-`ResetSequence` model input to initialize the state values with 0 constants stored
+`ResetSequence` model input to initialize the state values with 0 constants that are stored
 in the ONNX model. The files and folder structure can be used
 to serve similar stateful ONNX models.
 
@@ -127,13 +127,14 @@ to serve similar stateful ONNX models.
 * The state tensors can only have one dynamic dimension that is assumed to be the batch dimension. 
 * The ONNX model should contain the initial values for the state tensors. `CONTROL_SEQUENCE_START` control input can be mapped to a boolean model input tensor that signals when to reset the initial values of the states.
 * `ort_ep` model config parameter to choose the ORT backend between `trt` and `cuda`
-* `compute_precision` model config parameter to specify the precision for ORT `trt` EP
-* `always_pad_to_max_batch` model config parameter whether the batch dimension should be padded to max batch size for model execution (set value to `1`)
+* `compute_precision` model config parameter to specify the precision (`fp32` or `fp16`). `fp16` is only supported for ORT `trt` EP.
+* `always_pad_to_max_batch` model config parameter to specify whether the batch dimension should be padded to max batch size for model execution (set value to `1`)
+* `store_states_as_fp16` model config paramter to specify whether the internal states are stored as FP16 to reduce memory consumption (set value to `1`). However, it may impact the result accuracy.
 
 
 ## Limitations
 * Stateful backend only works with ONNX models
-* All tensor dimension expect from the batch dimension is fixed for a model instance
+* All tensor dimensions except for the batch dimension is fixed for a model instance
 * Only float (FP32) state tensors are supported
 * Model state reset tensor should be a boolean tensor
-* Only oldest sequence batching strategy is supported
+* Only `oldest` sequence batching strategy is supported

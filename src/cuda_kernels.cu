@@ -83,15 +83,14 @@ print_device_vector(int* vec, size_t size)
 #endif
 
 __global__ void
-storeStates(
+storeStates_FP32(
     float** storage, float** states, int* sizesX, int* sizesY, int* storeids,
     int batchStride)
 {
   int stateId = blockIdx.x;
   int batchId = blockIdx.y;
   int storeId = storeids[batchId];
-  if (storeId < 0)
-    return;  // no empty slots
+  if (storeId < 0) return; // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
   float* pDst = storage[stateId] + storeId * sizeX * sizeY;
@@ -106,15 +105,14 @@ storeStates(
 }
 
 __global__ void
-restoreStates(
+restoreStates_FP32(
     float** storage, float** states, int* sizesX, int* sizesY, int* storeids,
     int batchStride)
 {
   int stateId = blockIdx.x;
   int batchId = blockIdx.y;
   int storeId = storeids[batchId];
-  if (storeId < 0)
-    return;  // no empty slots
+  if (storeId < 0) return; // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
   float* pSrc = storage[stateId] + storeId * sizeX * sizeY;
@@ -128,33 +126,58 @@ restoreStates(
   }
 }
 
-// out-of-place conversion from float to __half
 __global__ void
-cast_fp32_to_fp16(size_t n, float* xfp32, __half* xfp16)
+storeStates_FP16(
+    __half** storage, float** states, int* sizesX, int* sizesY, int* storeids,
+    int batchStride)
 {
-  for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n;
-       i += blockDim.x * gridDim.x) {
-    xfp16[i] = __float2half(xfp32[i]);
+  int stateId = blockIdx.x;
+  int batchId = blockIdx.y;
+  int storeId = storeids[batchId];
+  if (storeId < 0) return; // no empty slots
+  int sizeX = sizesX[stateId];
+  int sizeY = sizesY[stateId];
+  __half* pDst = storage[stateId] + storeId * sizeX * sizeY;
+  float* pSrc = states[stateId] + batchId * sizeY;
+  for (int x = 0; x < sizeX; ++x) {
+    for (int i = threadIdx.x; i < sizeY; i += blockDim.x) {
+      pDst[i] = __float2half(pSrc[i]);
+    }
+    pDst += sizeY;
+    pSrc += batchStride * sizeY;
   }
 }
 
 __global__ void
-cast_fp32_to_int16(size_t n, float* xint32, int16_t* xint16)
+restoreStates_FP16(
+    __half** storage, float** states, int* sizesX, int* sizesY, int* storeids,
+    int batchStride)
 {
-  for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n;
-       i += blockDim.x * gridDim.x) {
-    xint16[i] = static_cast<int16_t>(xint32[i]);
+  int stateId = blockIdx.x;
+  int batchId = blockIdx.y;
+  int storeId = storeids[batchId];
+  if (storeId < 0) return; // no empty slots
+  int sizeX = sizesX[stateId];
+  int sizeY = sizesY[stateId];
+  __half* pSrc = storage[stateId] + storeId * sizeX * sizeY;
+  float* pDst = states[stateId] + batchId * sizeY;
+  for (int x = 0; x < sizeX; ++x) {
+    for (int i = threadIdx.x; i < sizeY; i += blockDim.x) {
+      pDst[i] = __half2float(pSrc[i]);
+    }
+    pSrc += sizeY;
+    pDst += batchStride * sizeY;
   }
 }
 
 void
-launchRestoreGPUKernel(
+launchRestoreGPUKernel_FP32(
     float** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream)
 {
   dim3 threadsPerBlock(256, 1);
   dim3 numBlocks(numStates, batchSize);
-  restoreStates<<<numBlocks, threadsPerBlock, 0, stream>>>(
+  restoreStates_FP32<<<numBlocks, threadsPerBlock, 0, stream>>>(
       storage, states, sizesX, sizesY, storeids, batchStride);
 #ifdef VERBOSE_OUTPUT
   std::cout << "Restoring the instances:" << std::endl;
@@ -165,13 +188,13 @@ launchRestoreGPUKernel(
 }
 
 void
-launchStoreGPUKernel(
+launchStoreGPUKernel_FP32(
     float** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream)
 {
   dim3 threadsPerBlock(256, 1);
   dim3 numBlocks(numStates, batchSize);
-  storeStates<<<numBlocks, threadsPerBlock, 0, stream>>>(
+  storeStates_FP32<<<numBlocks, threadsPerBlock, 0, stream>>>(
       storage, states, sizesX, sizesY, storeids, batchStride);
 #ifdef VERBOSE_OUTPUT
   std::cout << "Storing the instances:" << std::endl;
@@ -182,27 +205,35 @@ launchStoreGPUKernel(
 }
 
 void
-launchConvertFp32toFp16GPUKernel(
-    size_t size, void* data_fp32, void* data_fp16, cudaStream_t stream)
+launchRestoreGPUKernel_FP16(
+    __half** storage, float** states, int* sizesX, int* sizesY, int numStates,
+    int* storeids, int batchSize, int batchStride, cudaStream_t stream)
 {
   dim3 threadsPerBlock(256, 1);
-  size_t blks = size / threadsPerBlock.x;
-  if (blks > 1024)
-    blks = 1024;
-  dim3 numBlocks(1024, 1);
-  cast_fp32_to_fp16<<<numBlocks, threadsPerBlock, 0, stream>>>(
-      size, static_cast<float*>(data_fp32), static_cast<__half*>(data_fp16));
+  dim3 numBlocks(numStates, batchSize);
+  restoreStates_FP16<<<numBlocks, threadsPerBlock, 0, stream>>>(
+      storage, states, sizesX, sizesY, storeids, batchStride);
+#ifdef VERBOSE_OUTPUT
+  std::cout << "Restoring the instances:" << std::endl;
+  print_device_vector(storeids, batchSize);
+  print_device_vector(sizes, numStates);
+  print_device_vectors(states, numStates, 2);
+#endif
 }
 
 void
-launchConvertFp32toInt16GPUKernel(
-    size_t size, void* data_fp32, void* data_int16, cudaStream_t stream)
+launchStoreGPUKernel_FP16(
+    __half** storage, float** states, int* sizesX, int* sizesY, int numStates,
+    int* storeids, int batchSize, int batchStride, cudaStream_t stream)
 {
   dim3 threadsPerBlock(256, 1);
-  size_t blks = size / threadsPerBlock.x;
-  if (blks > 1024)
-    blks = 1024;
-  dim3 numBlocks(1024, 1);
-  cast_fp32_to_int16<<<numBlocks, threadsPerBlock, 0, stream>>>(
-      size, static_cast<float*>(data_fp32), static_cast<int16_t*>(data_int16));
+  dim3 numBlocks(numStates, batchSize);
+  storeStates_FP16<<<numBlocks, threadsPerBlock, 0, stream>>>(
+      storage, states, sizesX, sizesY, storeids, batchStride);
+#ifdef VERBOSE_OUTPUT
+  std::cout << "Storing the instances:" << std::endl;
+  print_device_vector(storeids, batchSize);
+  print_device_vector(sizes, numStates);
+  print_device_vectors(states, numStates, 2);
+#endif
 }
