@@ -8,7 +8,7 @@ The backend code automatically manages the input and output states of a model. T
 
 The example stateful model above has matching input and output tensors representing the model states. An output state tensor for a sequence id is passed as the input state during the next inference execution of the same sequence id. Therefore, we do not need to communicate the state tensors between server and client, and they can be kept on the GPU (or CPU) memory for GPU (or CPU) execution. The backend code stores the state tensors for all active sequences on the GPU (or CPU) memory and passes the stored state tensors as model input when the sequence id associated with the state tensors has an inference request.
 
-The state tensors are provided in the model configuration file at the 'state_pairs' section. For the example model in models/accumulate, the state tensor input and output pairs are specified in the `parameters` section as below:
+The state tensors are provided in the model configuration file at the `state_pairs` section. For the example model in models/accumulate, the state tensor input and output pairs are specified in the `parameters` section as below:
 ```
    {
     key: "state_pairs"
