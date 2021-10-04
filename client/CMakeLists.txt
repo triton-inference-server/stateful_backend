@@ -37,7 +37,7 @@ set(GRPC_CLIENT_LIB ${GRPC_CLIENT_DIR}/lib/libgrpcclient.so ${GRPC_CLIENT_DIR}/l
 set(GRPC_CLIENT_INC_DIR ${GRPC_CLIENT_DIR}/include)
 
 # template for building clients
-function(build_client src exe)
+function(build_client src exe extra_incs)
   add_executable(${exe} ${src})
   target_link_libraries(
     ${exe}
@@ -47,7 +47,7 @@ function(build_client src exe)
     TARGETS ${exe}
     RUNTIME DESTINATION bin
   )
-  target_include_directories(${exe} PUBLIC ${GRPC_CLIENT_INC_DIR})
+  target_include_directories(${exe} PUBLIC ${extra_incs} ${GRPC_CLIENT_INC_DIR})
 endfunction(build_client)
 
 if(WIN32)
@@ -59,6 +59,6 @@ else()
   #
   # simple_grpc_sequence_stateful_stream_infer_client
   #
-  build_client(simple_grpc_sequence_stateful_stream_infer_client.cc simple_grpc_sequence_stateful_stream_infer_client)
+  build_client(${CMAKE_CURRENT_LIST_DIR}/simple_grpc_sequence_stateful_stream_infer_client.cc simple_grpc_sequence_stateful_stream_infer_client "")
 
 endif() # WIN32

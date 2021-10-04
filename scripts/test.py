@@ -152,12 +152,12 @@ def DoEverything(root_dir):
   if err_happened:
     print("TEST FAILED!")
     exit(1)
+  print("TEST PASSED!")
   return
 
 def main():
   root_dir = os.path.join(os.path.abspath(sys.path[0]), os.pardir)
   DoEverything(root_dir)
-  print("TEST PASSED!")
   return
 
 if __name__ == "__main__":

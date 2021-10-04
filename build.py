@@ -22,7 +22,7 @@
 
 import os
 import sys
-sys.path.append( "scripts" )
+sys.path.append( os.path.join(os.path.abspath(sys.path[0]), "scripts") )
 import build_backend
 
 def main():
