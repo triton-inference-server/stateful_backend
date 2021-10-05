@@ -15,6 +15,8 @@ The state tensors are provided in the model configuration file at the `state_pai
     value: { string_value: "<<<Accumulate_In, Accumulate_Out>>>" }
    }
 ```
+In general, each state pair must be surrounded by 3 pairs of angle brackets and the state pairs must be separated by a space `' '` e.g.
+ `"<<<State_In_1, State_Out_1>>> <<<State_In_2, State_Out_2>>> ..."`.
 
 During the model instance initialization, the stateful backend reserves GPU (or CPU) memory as large as `max_candidate_sequences * sum_of_all_state_tensor_sizes` to store  model state tensors. 
 

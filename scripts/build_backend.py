@@ -27,6 +27,9 @@ import subprocess
 import stateful_utils
 import stateful_config
 
+def is_custom_image_ready():
+  return stateful_utils.is_image_ready(stateful_config.STATEFUL_BACKEND_IMAGE)
+
 def build_custom_image():
   print("Building the custom backend image ...")
   build_cmd = "docker build --tag {0} -f docker/Dockerfile.backend .".format(stateful_config.STATEFUL_BACKEND_IMAGE)
@@ -48,7 +51,7 @@ def setup_env(root_dir):
   return
 
 def get_backend_build_container():
-  if not stateful_utils.is_custom_image_ready():
+  if not is_custom_image_ready():
     build_custom_image()
 
   cnt = stateful_utils.get_running_container(stateful_config.STATEFUL_BACKEND_CONTAINER_NAME)

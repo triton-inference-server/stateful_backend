@@ -25,7 +25,6 @@ from docker.api import network
 from docker.models.containers import Container
 from docker.models.images import Image
 from docker.types.containers import DeviceRequest, Ulimit
-import stateful_config
 
 docker_client = None
 def get_docker_client():
@@ -34,14 +33,21 @@ def get_docker_client():
     docker_client = docker.from_env()
   return docker_client
 
-def is_custom_image_ready():
+def is_image_ready(img_name):
   dcl = get_docker_client()
   img: Image
   for img in dcl.images.list():
     for tag in img.tags:
-      if tag == stateful_config.STATEFUL_BACKEND_IMAGE:
+      if tag == img_name:
         return True
   return False
+
+def pull_image(img_name):
+  dcl = get_docker_client()
+  img_repo = img_name.split(":")[0]
+  img_tag = img_name.split(":")[1]
+  dcl.images.pull(repository=img_repo, tag=img_tag)
+  return
 
 def is_container_ready(cnt_name:str) -> Container:
   dcl = get_docker_client()
@@ -74,6 +80,9 @@ def create_container(img_name:str, cnt_name:str=None, auto_remove=True, \
                   with_gpus=True, ports=None, \
                   shm_size=None, memlock=None, \
                   stack_size=None, volumes=None):
+  # pull the image if it is missing
+  if not is_image_ready(img_name):
+    pull_image(img_name)
   print("Creating new container:{0} from Image: {1}".format(cnt_name, img_name))
   dcl = get_docker_client()
   devs = []
