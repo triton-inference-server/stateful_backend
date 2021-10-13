@@ -114,6 +114,7 @@ class ModelState : public BackendModel {
   std::string compute_precision_name_;
   std::string store_states_as_fp16_;
   std::string state_pairs_;
+  std::string max_candidate_sequence_use_ratio_;
   int64_t logging_level_;
   std::string metric_logging_frequency_seconds_;
   std::string enable_trt_caching_;
@@ -234,6 +235,7 @@ ModelState::InitModelState()
   ort_ep_name_ = "trt";
   compute_precision_name_ = "fp16";
   store_states_as_fp16_ = "0";
+  max_candidate_sequence_use_ratio_ = "0.9";
 
   IGNORE_ERROR(model_config_.MemberAsInt("max_batch_size", &max_batch_size_));
   LOG_MESSAGE(
@@ -365,6 +367,21 @@ ModelState::InitModelState()
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
       (std::string("store states as FP16 = ") + store_states_as_fp16_).c_str());
+
+  common::TritonJson::Value max_connection_ratio;
+  CHECK_IF_ERROR(
+      parameters.MemberAsObject(
+          "max_candidate_sequence_use_ratio",
+          &max_connection_ratio),
+      parse_succeeded);
+  if (parse_succeeded) {
+    IGNORE_ERROR(max_connection_ratio.MemberAsString(
+          "string_value", &max_candidate_sequence_use_ratio_));
+  }
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO, 
+      (std::string("max candidate sequence use ratio = ") + 
+      max_candidate_sequence_use_ratio_).c_str());
 
   common::TritonJson::Value metric_logging_frequency_seconds;
   CHECK_IF_ERROR(
@@ -711,6 +728,21 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   if (model_state->store_states_as_fp16_.compare("1") == 0)
     store_states_as_fp16 = true;
 
+  float max_connection_use_ratio = 0.9;
+  try {
+    if (!model_state->max_candidate_sequence_use_ratio_.empty()) {
+      max_connection_use_ratio = static_cast<float>(
+          std::stof(model_state->max_candidate_sequence_use_ratio_));
+    }
+  }
+  catch (...) {
+    LOG_MESSAGE(
+        TRITONSERVER_LOG_WARN,
+        "Invalid value in 'metric_logging_frequency_seconds'.");
+  }
+  int64_t max_connection = static_cast<int64_t>(
+      model_state->max_candidate_sequences_ * max_connection_use_ratio);
+
   bool pad_to_max_batch = false;
   if (model_state->always_pad_to_max_batch_.compare("1") == 0)
     pad_to_max_batch = true;
@@ -736,7 +768,7 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   try {
     std::string err_msg = instance_state->trt_onnx_model_->Prepare(
         ss_logs, model_state->mOrtEnv, full_onnx_file_name,
-        model_state->state_pairs_, model_state->max_candidate_sequences_,
+        model_state->state_pairs_, max_connection,
         device_id, model_state->pref_batch_sizes_, model_state->input_tensors_,
         model_state->output_tensors_, model_state->start_tensor_name_, useTrtEp,
         useFp16, store_states_as_fp16, pad_to_max_batch, enable_trt_caching,

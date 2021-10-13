@@ -25,6 +25,7 @@ from docker.api import network
 from docker.models.containers import Container
 from docker.models.images import Image
 from docker.types.containers import DeviceRequest, Ulimit
+import subprocess
 
 docker_client = None
 def get_docker_client():
@@ -80,6 +81,10 @@ def create_container(img_name:str, cnt_name:str=None, auto_remove=True, \
                   with_gpus=True, ports=None, \
                   shm_size=None, memlock=None, \
                   stack_size=None, volumes=None):
+  # set the user parameter
+  uid = subprocess.check_output("id -u")
+  gid = subprocess.check_output("id -g")
+  user_param = uid + ":" + gid
   # pull the image if it is missing
   if not is_image_ready(img_name):
     pull_image(img_name)
@@ -101,6 +106,7 @@ def create_container(img_name:str, cnt_name:str=None, auto_remove=True, \
   
   cnt = dcl.containers.create(img_name, name=cnt_name, auto_remove=auto_remove, \
           tty=True, device_requests=devs, ports=ports, shm_size=shm_size, \
-          network_mode=network_mode, ulimits=ulimits, volumes=volumes)
+          network_mode=network_mode, ulimits=ulimits, volumes=volumes, \
+          user=user_param)
   return cnt
   

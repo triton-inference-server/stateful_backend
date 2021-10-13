@@ -20,11 +20,39 @@ In general, each state pair must be surrounded by 3 pairs of angle brackets and 
 
 During the model instance initialization, the stateful backend reserves GPU (or CPU) memory as large as `max_candidate_sequences * sum_of_all_state_tensor_sizes` to store  model state tensors. 
 
-## How to use?
+## Building the backend
+Run:
+```
+python3 ./build.py
+```
+The backend binary will be produced in `build/install/backends` directory.
+
+Alternatively, you can do the following steps to build manually:
+1. Build the custom docker image which we will use to build the backend:
+```
+NGC_VERSION=$(head -1 ./NGC_VERSION) # read the container version to use
+docker build --tag triton-${NGC_VERSION}-backend -f docker/Dockerfile.backend --build-arg BASE_IMAGE_VERSION=${NGC_VERSION} .
+```
+
+2. Create a container of the previously built image:
+```
+docker run --gpus all -it --rm --shm-size=1g --ulimit memlock=-1 --ulimit stack=67108864 -v${PWD}:/workspace/stateful triton-${NGC_VERSION}-backend
+```
+
+3. Inside the container, run the following:
+```
+mkdir -p /workspace/stateful/build && cd /workspace/stateful/build
+cmake -DCMAKE_INSTALL_PREFIX:PATH=`pwd`/install ..
+make -j
+make install
+```
+
+## Using the backend with Triton
 1. [Build](#building-the-backend) the backend. Run Triton server docker image, and copy the backend files to the triton [backend folder](https://github.com/triton-inference-server/backend#can-i-add-or-remove-a-backend-to-an-existing-triton-installation). Delete existing onnxruntime backend and set the LD_LIBRARY_PATH variable:
  
 ```
-docker run --gpus all -it --rm --shm-size=1g --ulimit memlock=-1 --ulimit stack=67108864 -p8005:8005 -p8006:8006 -p8007:8007 -v${PWD}:/workspace/stateful_backend nvcr.io/nvidia/tritonserver:21.08-py3
+NGC_VERSION=$(head -1 ./NGC_VERSION) # read the container version to use
+docker run --gpus all -it --rm --shm-size=1g --ulimit memlock=-1 --ulimit stack=67108864 -p8005:8005 -p8006:8006 -p8007:8007 -v${PWD}:/workspace/stateful_backend nvcr.io/nvidia/tritonserver:${NGC_VERSION}-py3
 rm -rf /opt/tritonserver/backends/onnxruntime # Remove existing ORT backend to avoid having two copies
 cp  -R /workspace/stateful_backend/build/install/backends/stateful ./backends/ # Copy the stateful backend
 export LD_LIBRARY_PATH=/workspace/stateful_backend/build/ort-lib/ # Add ORT to the LD_LIBRARY_PATH
@@ -78,36 +106,10 @@ tritonserver --grpc-port 8005 --model-repository /workspace/stateful_backend/mod
 
 ```
 
-## Building the backend
-Run:
-```
-$ python3 ./build.py
-```
-The backend binary will be produced in `build/install/backends` directory.
-
-Alternatively, you can do the following steps to build manually (NOTE: we will be using 21.08 NGC containers):
-1. Build the custom docker image which we will use to build the backend:
-```
-$ docker build --tag triton-21.08-backend -f docker/Dockerfile.backend .
-```
-
-2. Create a container of the previously built image:
-```
-$ docker run --gpus all -it --rm --shm-size=1g --ulimit memlock=-1 --ulimit stack=67108864 -v${PWD}:/workspace/stateful triton-21.08-backend
-```
-
-3. Inside the container, run the following:
-```
-$ mkdir -p /workspace/stateful/build && cd /workspace/stateful/build
-$ cmake -DCMAKE_INSTALL_PREFIX:PATH=`pwd`/install -DTRITON_BACKEND_REPO_TAG="r21.08" -DTRITON_CORE_REPO_TAG="r21.08" -DTRITON_COMMON_REPO_TAG="r21.08" ..
-$ make -j
-$ make install
-```
-
 ## Testing the backend
 Run: 
 ```
-$ python3 scripts/test.py
+python3 scripts/test.py
 ```
 It will build the backend, start the tritonserver with the backend, run a simple client with the accumulate model.
 

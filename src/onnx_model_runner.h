@@ -39,6 +39,14 @@ using time_point_t = std::chrono::steady_clock::time_point;  // use wall clock
 #define DURATION_MICRO std::chrono::duration_cast<std::chrono::microseconds>
 #define DURATION std::chrono::duration_cast<std::chrono::seconds>
 
+// #define VERBOSE_COUT
+
+#ifdef VERBOSE_COUT
+  using log_stream_t = std::ostream;
+#else
+  using log_stream_t = std::stringstream;
+#endif
+
 inline std::string
 GetTimeStampForLogs()
 {
@@ -349,7 +357,7 @@ class TrtOnnxModel {
       std::vector<InferenceTask>& inferenceTasks, int batchSize,
       int batchStride);
   std::string prepareDeviceStoreIds(
-      std::stringstream& verbose_ss, std::vector<InferenceTask>& inferenceTasks,
+      log_stream_t& verbose_ss, std::vector<InferenceTask>& inferenceTasks,
       int batchSize);
 
   std::unordered_map<uint64_t, std::pair<int, time_point_t>> mStoreIdMap;
@@ -411,7 +419,7 @@ class TrtOnnxModel {
   int mNumInputs{0};
 
   void capture_time(double& time, int start_end, int bathsize);
-  void report_time(std::stringstream& verbose_ss, std::stringstream& info_ss);
+  void report_time(log_stream_t& verbose_ss, log_stream_t& info_ss);
   double mHostPreTime{0.}, mHostPostTime{0.};
   double mDevicePreTime{0.}, mDevicePostTime{0.};
   double mDeviceExeTime{0.};

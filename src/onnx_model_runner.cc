@@ -40,7 +40,6 @@
 #include <sys/time.h>
 
 // #define VERBOSE_OUTPUT
-// #define VERBOSE_COUT
 
 #undef RETURN_IF_CUDA_ERROR
 #define RETURN_IF_CUDA_ERROR(status)                                           \
@@ -172,13 +171,14 @@ TrtOnnxModel::Prepare(
     int64_t logLevel, int64_t metricLoggingFreq, int64_t seq_timeout_us)
 {
   mLogLevel = logLevel;
-  std::stringstream ss_null;  // use a local stream to consume the logs
 #ifdef VERBOSE_COUT
-  std::ostream& verbose_ss = std::cout;
+  log_stream_t& verbose_ss = std::cout;
+  log_stream_t& info_ss = std::cout;
 #else
-  std::stringstream& verbose_ss = (mLogLevel > 0 ? ss_logs : ss_null);
+  log_stream_t ss_null;  // use a local stream to consume the logs
+  log_stream_t& verbose_ss = (mLogLevel > 0 ? ss_logs : ss_null);
+  log_stream_t& info_ss = (mLogLevel >= 0 ? ss_logs : ss_null);
 #endif
-  // std::stringstream& info_ss = (mLogLevel >= 0 ? ss_logs : ss_null);
 
 
   mMetricLoggingFreqSeconds = metricLoggingFreq;
@@ -187,6 +187,8 @@ TrtOnnxModel::Prepare(
       "Max connections should be larger than or equal to the max batch size");
   mPreferredBatchSizes = pref_batch_sizes;
   mMaxNbConnections = maxNbConnections;
+  info_ss << "Maximum connections allowed in the backend: "
+      << mMaxNbConnections << std::endl;
   mSequenceTimeoutMicroseconds = seq_timeout_us;
   // populate the available indices for the buffers
   for (int i = 0; i < mMaxNbConnections; ++i)
@@ -914,7 +916,7 @@ void launchStoreGPUKernel_FP16(
 
 std::string
 TrtOnnxModel::prepareDeviceStoreIds(
-    std::stringstream& verbose_ss, std::vector<InferenceTask>& inferenceTasks,
+    log_stream_t& verbose_ss, std::vector<InferenceTask>& inferenceTasks,
     int batchSize)
 {
   /**
@@ -1134,7 +1136,7 @@ TrtOnnxModel::capture_time(double& time, int start_end, int bathsize)
 
 void
 TrtOnnxModel::report_time(
-    std::stringstream& verbose_ss, std::stringstream& info_ss)
+    log_stream_t& verbose_ss, log_stream_t& info_ss)
 {
   time_point_t curTimeStamp = NOW();
   if (mMetricLoggingFreqSeconds > 0  // is logging enabled
@@ -1170,9 +1172,14 @@ TrtOnnxModel::InferTasks(
     std::stringstream& ss_logs, std::vector<InferenceTask>& inferenceTasks,
     int batchSize, uint64_t& comp_start_ns, uint64_t& comp_end_ns)
 {
-  std::stringstream ss_null;  // use a local stream to consume the logs
-  std::stringstream& verbose_ss = (mLogLevel > 0 ? ss_logs : ss_null);
-  std::stringstream& info_ss = (mLogLevel >= 0 ? ss_logs : ss_null);
+#ifdef VERBOSE_COUT
+  log_stream_t& verbose_ss = std::cout;
+  log_stream_t& info_ss = std::cout;
+#else
+  log_stream_t ss_null;  // use a local stream to consume the logs
+  log_stream_t& verbose_ss = (mLogLevel > 0 ? ss_logs : ss_null);
+  log_stream_t& info_ss = (mLogLevel >= 0 ? ss_logs : ss_null);
+#endif
 
   RETURN_IF_FALSE(
       (size_t)batchSize <= inferenceTasks.size(),

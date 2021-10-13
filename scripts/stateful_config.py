@@ -19,8 +19,18 @@
 # IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+import os
+import sys
 
-TRITON_REPO_VERSION = "21.08"
+TRITON_REPO_VERSION = ""
+root_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir)
+version_file = os.path.join(root_dir, "NGC_VERSION")
+with open(version_file) as fp:
+    TRITON_REPO_VERSION = fp.read().splitlines()[0].strip()
+    print("Triton repo tag is set to: ", TRITON_REPO_VERSION)
+if TRITON_REPO_VERSION == "":
+    print("Invalid tag for Triton repos.")
+    exit(1)
 
 STATEFUL_BACKEND_CONTAINER_NAME = "test_stateful_backend"
 STATEFUL_BACKEND_REPO = "triton-{0}-backend".format(TRITON_REPO_VERSION)

@@ -33,9 +33,11 @@ project(tritononnxstatefulbackend LANGUAGES C CXX CUDA)
 option(TRITON_ENABLE_GPU "Enable GPU support in backend" ON)
 option(TRITON_ENABLE_STATS "Include statistics collections in backend" ON)
 
-set(TRITON_COMMON_REPO_TAG "main" CACHE STRING "Tag for triton-inference-server/common repo")
-set(TRITON_CORE_REPO_TAG "main" CACHE STRING "Tag for triton-inference-server/core repo")
-set(TRITON_BACKEND_REPO_TAG "main" CACHE STRING "Tag for triton-inference-server/backend repo")
+file (STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/NGC_VERSION" NGC_VERSION)
+message("CMAKE Triton repo tag is set to: ${NGC_VERSION}")
+set(TRITON_COMMON_REPO_TAG "r{NGC_VERSION}" CACHE STRING "Tag for triton-inference-server/common repo")
+set(TRITON_CORE_REPO_TAG "r{NGC_VERSION}" CACHE STRING "Tag for triton-inference-server/core repo")
+set(TRITON_BACKEND_REPO_TAG "r{NGC_VERSION}" CACHE STRING "Tag for triton-inference-server/backend repo")
 
 find_library(CUDART_LIBRARY cudart ${CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES})
 

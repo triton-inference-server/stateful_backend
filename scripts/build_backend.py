@@ -32,7 +32,9 @@ def is_custom_image_ready():
 
 def build_custom_image():
   print("Building the custom backend image ...")
-  build_cmd = "docker build --tag {0} -f docker/Dockerfile.backend .".format(stateful_config.STATEFUL_BACKEND_IMAGE)
+  build_cmd = "docker build --tag {0} -f docker/Dockerfile.backend " \
+    + " --build-arg BASE_IMAGE_VERSION={1} .".format(stateful_config.STATEFUL_BACKEND_IMAGE, \
+      stateful_config.TRITON_REPO_VERSION)
   try:
     output = subprocess.check_output( shlex.split( build_cmd, posix=(sys.version!= "nt") ) )
   except:
