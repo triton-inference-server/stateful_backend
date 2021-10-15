@@ -26,6 +26,7 @@ from docker.models.containers import Container
 from docker.models.images import Image
 from docker.types.containers import DeviceRequest, Ulimit
 import subprocess
+import shlex
 
 docker_client = None
 def get_docker_client():
@@ -82,8 +83,8 @@ def create_container(img_name:str, cnt_name:str=None, auto_remove=True, \
                   shm_size=None, memlock=None, \
                   stack_size=None, volumes=None):
   # set the user parameter
-  uid = subprocess.check_output("id -u")
-  gid = subprocess.check_output("id -g")
+  uid = subprocess.check_output(shlex.split("id -u")).decode().strip()
+  gid = subprocess.check_output(shlex.split("id -g")).decode().strip()
   user_param = uid + ":" + gid
   # pull the image if it is missing
   if not is_image_ready(img_name):
