@@ -119,6 +119,18 @@ parameters [
     value: { string_value: "0" }
   },
   {
+    key: "enable_trt_caching"
+    # Enable TRT engine caching
+    #  Default: 0, disabled
+    value: { string_value: "1" }
+  },
+  {
+    key: "trt_cache_dir"
+    # TRT cache directory, ignored if TRT caching is disabled
+    #  Default: /tmp
+    value: { string_value: "/tmp/trt_cache" }
+  },
+  {
     key: "logging_level"
     # Metrics report logging::
     #  NONE: No logs from model runner.

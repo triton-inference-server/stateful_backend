@@ -295,8 +295,8 @@ class TrtOnnxModel {
       const std::vector<TritonTensorInfo>& output_tensors,
       std::string reset_tensor_name, bool useTrtEp = true, bool useFp16 = false,
       bool store_states_as_fp16 = false, bool pad_to_max_batch = false,
-      bool enable_trt_caching = false, int64_t logLevel = 1,
-      int64_t metricLoggingFreq = 0,
+      bool enable_trt_caching = false, std::string trt_cache_dir = "/tmp",
+      int64_t logLevel = 1, int64_t metricLoggingFreq = 0,
       int64_t sequnce_timeout_microseconds = INT64_MAX);
 
   // Runs inference for multiple tasks for Triton backend

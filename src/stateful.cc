@@ -118,6 +118,7 @@ class ModelState : public BackendModel {
   int64_t logging_level_;
   std::string metric_logging_frequency_seconds_;
   std::string enable_trt_caching_;
+  std::string trt_cache_dir_;
   std::string always_pad_to_max_batch_;
   int64_t error_inject_rate_;
 
@@ -236,6 +237,7 @@ ModelState::InitModelState()
   compute_precision_name_ = "fp16";
   store_states_as_fp16_ = "0";
   max_candidate_sequence_use_ratio_ = "0.9";
+  trt_cache_dir_ = "/tmp";
 
   IGNORE_ERROR(model_config_.MemberAsInt("max_batch_size", &max_batch_size_));
   LOG_MESSAGE(
@@ -423,6 +425,19 @@ ModelState::InitModelState()
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
       (std::string("Enable TRT Engine Caching = ") + enable_trt_caching_)
+          .c_str());
+
+  common::TritonJson::Value trt_cache_dir;
+  CHECK_IF_ERROR(
+      parameters.MemberAsObject("trt_cache_dir", &trt_cache_dir),
+      parse_succeeded);
+  if (parse_succeeded) {
+    IGNORE_ERROR(trt_cache_dir.MemberAsString(
+        "string_value", &trt_cache_dir_));
+  }
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("TRT Cache Location = ") + trt_cache_dir_)
           .c_str());
 
 #ifdef DEBUG_ERROR_INJECT
@@ -772,8 +787,8 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
         device_id, model_state->pref_batch_sizes_, model_state->input_tensors_,
         model_state->output_tensors_, model_state->start_tensor_name_, useTrtEp,
         useFp16, store_states_as_fp16, pad_to_max_batch, enable_trt_caching,
-        model_state->logging_level_, metricLoggingFreq,
-        model_state->max_sequence_idle_microseconds_);
+        model_state->trt_cache_dir_, model_state->logging_level_,
+        metricLoggingFreq, model_state->max_sequence_idle_microseconds_);
 
     std::string str_logs = ss_logs.str();
     if (model_state->logging_level_ >= 0 && !str_logs.empty()) {

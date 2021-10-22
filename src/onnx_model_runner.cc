@@ -168,7 +168,8 @@ TrtOnnxModel::Prepare(
     const std::vector<TritonTensorInfo>& output_tensors,
     std::string reset_tensor_name, bool useTrtEp, bool useFp16,
     bool store_states_as_fp16, bool pad_to_max_batch, bool enable_trt_caching,
-    int64_t logLevel, int64_t metricLoggingFreq, int64_t seq_timeout_us)
+    std::string trt_cache_dir, int64_t logLevel,
+    int64_t metricLoggingFreq, int64_t seq_timeout_us)
 {
   mLogLevel = logLevel;
 #ifdef VERBOSE_COUT
@@ -242,7 +243,8 @@ TrtOnnxModel::Prepare(
           0,                           // trt_dla_core
           0,                           // trt_dump_subgraphs
           enable_trt_caching ? 1 : 0,  // trt_engine_cache_enable
-          enable_trt_caching ? "/tmp" : nullptr,  // trt_engine_cache_path
+          enable_trt_caching ?
+            trt_cache_dir.c_str() : nullptr,  // trt_engine_cache_path
           0,        // trt_engine_decryption_enable
           nullptr,  // trt_engine_decryption_lib_path
           0         // trt_force_sequential_engine_build
