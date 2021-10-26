@@ -21,7 +21,7 @@
 
 
 import docker
-from docker.api import network
+from docker.api import image, network
 from docker.models.containers import Container
 from docker.models.images import Image
 from docker.types.containers import DeviceRequest, Ulimit
@@ -34,6 +34,40 @@ def get_docker_client():
   if docker_client is None:
     docker_client = docker.from_env()
   return docker_client
+
+def remove_container(cnt: Container):
+  try:
+    cnt.stop()
+    cnt.remove()
+  except:
+    pass
+  return
+
+def remove_container_by_name(cnt_name):
+  dcl = get_docker_client()
+  cnt: Container
+  for cnt in dcl.containers.list(all=True, filters={"name": cnt_name}):
+    if cnt_name == cnt.name:
+      remove_container(cnt)
+  return
+
+def remove_image_by_name(img_name):
+  dcl = get_docker_client()
+  dcl.images.remove(img_name)
+  return
+
+def remove_image_with_containers(img_name):
+  dcl = get_docker_client()
+  cnt: Container
+  for cnt in dcl.containers.list(all=True):
+    print("Found container :", cnt.name, cnt.image.tags)
+    for tag in cnt.image.tags:
+      if tag == img_name:
+        print("Stopping and removing container :", cnt.name)
+        remove_container(cnt)
+  # now that all containers are stopped/removed, remove the image
+  dcl.images.remove(img_name)
+  return
 
 def is_image_ready(img_name):
   dcl = get_docker_client()
