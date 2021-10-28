@@ -132,12 +132,12 @@ def RunClient(root_dir):
   assert status[0] == 0
   return
 
-def DoEverything(root_dir):
+def DoEverything(root_dir, args):
   err_happened = False
   # 0. setup the environment
   setup_env(root_dir)
   # 1. Build the backend
-  build_backend.DoEverything(root_dir)
+  build_backend.DoEverything(root_dir, args)
   # 2. Run the server
   scnt = RunServer(root_dir)
   # 3. Run the client
@@ -157,7 +157,7 @@ def DoEverything(root_dir):
 
 def main():
   root_dir = os.path.join(os.path.abspath(sys.path[0]), os.pardir)
-  DoEverything(root_dir)
+  DoEverything(root_dir, sys.argv)
   return
 
 if __name__ == "__main__":
