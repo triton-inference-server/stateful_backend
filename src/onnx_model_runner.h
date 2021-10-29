@@ -42,9 +42,9 @@ using time_point_t = std::chrono::steady_clock::time_point;  // use wall clock
 // #define VERBOSE_COUT
 
 #ifdef VERBOSE_COUT
-  using log_stream_t = std::ostream;
+using log_stream_t = std::ostream;
 #else
-  using log_stream_t = std::stringstream;
+using log_stream_t = std::stringstream;
 #endif
 
 inline std::string
@@ -247,7 +247,7 @@ class InferenceTask {
  public:
   int mStart;
   int mEnd;
-  uint64_t mCorrId;
+  std::string mCorrId;
   const void* mInput[MAX_IO_NUM];
   void* mOutput[MAX_IO_NUM];
   std::string err_msg;  // will be used to track individual error
@@ -360,9 +360,9 @@ class TrtOnnxModel {
       log_stream_t& verbose_ss, std::vector<InferenceTask>& inferenceTasks,
       int batchSize);
 
-  std::unordered_map<uint64_t, std::pair<int, time_point_t>> mStoreIdMap;
+  std::unordered_map<std::string, std::pair<int, time_point_t>> mStoreIdMap;
   std::set<int> mStoreAvailableIds;
-  std::vector<int> mCorrIdToDelete;
+  std::vector<std::string> mCorrIdToDelete;
 
   // Engines used for inference. The first is used for resizing inputs, the
   // second for prediction. SampleUniquePtr<nvinfer1::ICudaEngine>

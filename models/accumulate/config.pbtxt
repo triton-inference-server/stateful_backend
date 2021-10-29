@@ -54,7 +54,8 @@ sequence_batching {
       control [
         {
           kind: CONTROL_SEQUENCE_CORRID
-          data_type: TYPE_UINT64
+          data_type: TYPE_STRING
+          # data_type: TYPE_UINT64
         }
       ]
     }

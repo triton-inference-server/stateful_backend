@@ -107,6 +107,7 @@ class ModelState : public BackendModel {
   int64_t max_sequence_idle_microseconds_;
   int64_t max_candidate_sequences_;
   std::vector<int64_t> pref_batch_sizes_;
+  bool is_corrId_string;
 
   std::string path_;
   std::string onnx_file_name_;
@@ -233,6 +234,7 @@ ModelState::InitModelState()
   max_sequence_idle_microseconds_ = 100000000;
   max_candidate_sequences_ = 1280;
   pref_batch_sizes_ = {64};
+  is_corrId_string = false;
   ort_ep_name_ = "trt";
   compute_precision_name_ = "fp16";
   store_states_as_fp16_ = "0";
@@ -281,6 +283,16 @@ ModelState::InitModelState()
       LOG_MESSAGE(
           TRITONSERVER_LOG_INFO,
           (std::string("End Name = ") + end_tensor_name_).c_str());
+
+    } else if (control_type.compare("CONTROL_SEQUENCE_CORRID") == 0) {
+      std::string control_data_type;
+      RETURN_IF_ERROR(control.MemberAsString("data_type", &control_data_type));
+      LOG_MESSAGE(
+          TRITONSERVER_LOG_INFO,
+          (std::string("CORRID Data Type = ") + control_data_type).c_str());
+      if (control_data_type.compare("TYPE_STRING") == 0) {
+        is_corrId_string = true;
+      }
     }
   }
   IGNORE_ERROR(sequence_batching.MemberAsInt(
@@ -373,17 +385,17 @@ ModelState::InitModelState()
   common::TritonJson::Value max_connection_ratio;
   CHECK_IF_ERROR(
       parameters.MemberAsObject(
-          "max_candidate_sequence_use_ratio",
-          &max_connection_ratio),
+          "max_candidate_sequence_use_ratio", &max_connection_ratio),
       parse_succeeded);
   if (parse_succeeded) {
     IGNORE_ERROR(max_connection_ratio.MemberAsString(
-          "string_value", &max_candidate_sequence_use_ratio_));
+        "string_value", &max_candidate_sequence_use_ratio_));
   }
   LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO, 
-      (std::string("max candidate sequence use ratio = ") + 
-      max_candidate_sequence_use_ratio_).c_str());
+      TRITONSERVER_LOG_INFO,
+      (std::string("max candidate sequence use ratio = ") +
+       max_candidate_sequence_use_ratio_)
+          .c_str());
 
   common::TritonJson::Value metric_logging_frequency_seconds;
   CHECK_IF_ERROR(
@@ -432,13 +444,11 @@ ModelState::InitModelState()
       parameters.MemberAsObject("trt_cache_dir", &trt_cache_dir),
       parse_succeeded);
   if (parse_succeeded) {
-    IGNORE_ERROR(trt_cache_dir.MemberAsString(
-        "string_value", &trt_cache_dir_));
+    IGNORE_ERROR(trt_cache_dir.MemberAsString("string_value", &trt_cache_dir_));
   }
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
-      (std::string("TRT Cache Location = ") + trt_cache_dir_)
-          .c_str());
+      (std::string("TRT Cache Location = ") + trt_cache_dir_).c_str());
 
 #ifdef DEBUG_ERROR_INJECT
   common::TritonJson::Value error_inject_rate;
@@ -783,8 +793,8 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   try {
     std::string err_msg = instance_state->trt_onnx_model_->Prepare(
         ss_logs, model_state->mOrtEnv, full_onnx_file_name,
-        model_state->state_pairs_, max_connection,
-        device_id, model_state->pref_batch_sizes_, model_state->input_tensors_,
+        model_state->state_pairs_, max_connection, device_id,
+        model_state->pref_batch_sizes_, model_state->input_tensors_,
         model_state->output_tensors_, model_state->start_tensor_name_, useTrtEp,
         useFp16, store_states_as_fp16, pad_to_max_batch, enable_trt_caching,
         model_state->trt_cache_dir_, model_state->logging_level_,
@@ -921,10 +931,28 @@ TRITONBACKEND_ModelInstanceExecute(
     GUARDED_RESPOND_IF_ERROR(
         responses, r, TRITONBACKEND_RequestId(request, &request_id));
 
-    uint64_t correlation_id = 0;
-    GUARDED_RESPOND_IF_ERROR(
-        responses, r,
-        TRITONBACKEND_RequestCorrelationId(request, &correlation_id));
+    /**
+     * TODO:
+     *  Managing only string sequence ids in the backend for now.
+     *  UINT64 sequence ids are also converted to string for convenience.
+     *  Once the InferenceRequest::SequenceId class is in common repo,
+     *  we can reuse that implementation.
+     */
+    std::string correlation_id;
+    if (!model_state->is_corrId_string) {
+      uint64_t u64_correlation_id = 0;
+      GUARDED_RESPOND_IF_ERROR(
+          responses, r,
+          TRITONBACKEND_RequestCorrelationId(request, &u64_correlation_id));
+      correlation_id = std::to_string(u64_correlation_id);
+    } else {
+      const char* str_correlation_id = "";
+      GUARDED_RESPOND_IF_ERROR(
+          responses, r,
+          TRITONBACKEND_RequestCorrelationIdString(
+              request, &str_correlation_id));
+      correlation_id = std::string(str_correlation_id);
+    }
 
     TRITONBACKEND_Input* input = nullptr;
     TRITONSERVER_MemoryType input_memory_type = TRITONSERVER_MEMORY_CPU;
