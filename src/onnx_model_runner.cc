@@ -168,8 +168,8 @@ TrtOnnxModel::Prepare(
     const std::vector<TritonTensorInfo>& output_tensors,
     std::string reset_tensor_name, bool useTrtEp, bool useFp16,
     bool store_states_as_fp16, bool pad_to_max_batch, bool enable_trt_caching,
-    std::string trt_cache_dir, int64_t logLevel,
-    int64_t metricLoggingFreq, int64_t seq_timeout_us)
+    std::string trt_cache_dir, int64_t logLevel, int64_t metricLoggingFreq,
+    int64_t seq_timeout_us)
 {
   mLogLevel = logLevel;
 #ifdef VERBOSE_COUT
@@ -188,8 +188,8 @@ TrtOnnxModel::Prepare(
       "Max connections should be larger than or equal to the max batch size");
   mPreferredBatchSizes = pref_batch_sizes;
   mMaxNbConnections = maxNbConnections;
-  info_ss << "Maximum connections allowed in the backend: "
-      << mMaxNbConnections << std::endl;
+  info_ss << "Maximum connections allowed in the backend: " << mMaxNbConnections
+          << std::endl;
   mSequenceTimeoutMicroseconds = seq_timeout_us;
   // populate the available indices for the buffers
   for (int i = 0; i < mMaxNbConnections; ++i)
@@ -232,35 +232,35 @@ TrtOnnxModel::Prepare(
           mGpuId,
           1,
           mCudaStreamExe,
-          1000,                        // trt_max_partition_iterations
-          1,                           // trt_min_subgraph_size
-          1 << 30,                     // max_workspace_size
-          useFp16,                     // trt_fp16_enable
-          0,                           // trt_int8_enable
-          nullptr,                     // trt_int8_calibration_table_name
-          0,                           // trt_int8_calibration_table_name
-          0,                           // trt_dla_enable
-          0,                           // trt_dla_core
-          0,                           // trt_dump_subgraphs
-          enable_trt_caching ? 1 : 0,  // trt_engine_cache_enable
-          enable_trt_caching ?
-            trt_cache_dir.c_str() : nullptr,  // trt_engine_cache_path
-          0,        // trt_engine_decryption_enable
-          nullptr,  // trt_engine_decryption_lib_path
-          0         // trt_force_sequential_engine_build
+          1000,                              // trt_max_partition_iterations
+          1,                                 // trt_min_subgraph_size
+          1 << 30,                           // max_workspace_size
+          useFp16,                           // trt_fp16_enable
+          0,                                 // trt_int8_enable
+          nullptr,                           // trt_int8_calibration_table_name
+          0,                                 // trt_int8_calibration_table_name
+          0,                                 // trt_dla_enable
+          0,                                 // trt_dla_core
+          0,                                 // trt_dump_subgraphs
+          enable_trt_caching ? 1 : 0,        // trt_engine_cache_enable
+          enable_trt_caching ? trt_cache_dir.c_str()
+                             : nullptr,  // trt_engine_cache_path
+          0,                             // trt_engine_decryption_enable
+          nullptr,                       // trt_engine_decryption_lib_path
+          0                              // trt_force_sequential_engine_build
       };
       session_options.AppendExecutionProvider_TensorRT(trt_options);
     }
-    OrtCUDAProviderOptions cuda_options{
-        mGpuId,
-        OrtCudnnConvAlgoSearch::EXHAUSTIVE,  // cudnn_conv_algo_search
-        std::numeric_limits<size_t>::max(),  // gpu_mem_limit
-        0,                                   // arena_extend_strategy
-        true,                                // do_copy_in_default_stream
-        1,
-        mCudaStreamExe,
-        nullptr  // default_memory_arena_cfg
-    };
+    OrtCUDAProviderOptions cuda_options;
+    cuda_options.device_id = mGpuId;
+    cuda_options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearch::EXHAUSTIVE;
+    cuda_options.gpu_mem_limit = std::numeric_limits<size_t>::max();
+    cuda_options.arena_extend_strategy = 0;
+    cuda_options.do_copy_in_default_stream = 1;
+    cuda_options.has_user_compute_stream = 1;
+    cuda_options.user_compute_stream = mCudaStreamExe;
+    cuda_options.default_memory_arena_cfg = nullptr;
+
     session_options.AppendExecutionProvider_CUDA(cuda_options);
   }
 
@@ -1137,8 +1137,7 @@ TrtOnnxModel::capture_time(double& time, int start_end, int bathsize)
 }
 
 void
-TrtOnnxModel::report_time(
-    log_stream_t& verbose_ss, log_stream_t& info_ss)
+TrtOnnxModel::report_time(log_stream_t& verbose_ss, log_stream_t& info_ss)
 {
   time_point_t curTimeStamp = NOW();
   if (mMetricLoggingFreqSeconds > 0  // is logging enabled

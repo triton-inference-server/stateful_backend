@@ -22,7 +22,6 @@
 #pragma once
 
 
-#include <cuda_provider_factory.h>
 #include <onnxruntime_cxx_api.h>
 #include <tensorrt_provider_factory.h>
 #include <chrono>

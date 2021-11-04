@@ -83,7 +83,6 @@ RUN rm -f /usr/local/bin/cmake
 # Workspace dir
 WORKDIR /workspace
 
-# Build ONNXRT branch with TRT 8 support - update it to an actual ORT release
-# once ORT officially supports TRT 8
-RUN git clone --branch stevenlix/trt8  https://github.com/microsoft/onnxruntime.git && cd /workspace/onnxruntime && git checkout 3d884f0d3ab8e538bb4bae0fd0a7efdc08645273
+# Build ONNXRT release branch
+RUN git clone --branch rel-1.9.0  https://github.com/microsoft/onnxruntime.git && cd /workspace/onnxruntime && git checkout 4daa14bc74b5378d5fcb0d6de063a9fa8bd42eac
 RUN cd /workspace/onnxruntime && ./build.sh --use_cuda --cuda_home /usr/local/cuda-11.4/ --cuda_version 11.4 --cudnn_home /usr/lib/x86_64-linux-gnu/ --use_tensorrt --tensorrt_home /usr/lib/x86_64-linux-gnu/ --parallel 8 --build_shared_lib --config Release --skip_tests
