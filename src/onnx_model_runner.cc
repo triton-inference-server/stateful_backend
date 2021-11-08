@@ -828,44 +828,44 @@ TrtOnnxModel::Prepare(
     throw;
   }
 
-  // make warmup runs to initialize the engines for all dims for TRT
-  if (mUseTrtEp) {
-    {
-      verbose_ss << "Warmup run for batch = " << mBatchDimMax << std::endl;
-      double start = get_time_msec();
-      Ort::IoBinding bindings(*mSession);
-      setBindings(mBatchDimMax, bindings);
-      mSession->Run(mRunOptions, bindings);
-      double end = get_time_msec();
-      verbose_ss << "Time required to run: " << (end - start) << " milliseconds"
-                 << std::endl;
-    }
-
-    // no need to generate batch=1 engine if we always padd to preferred batch
-    // sizes
-    if (mPaddBatchSize == false) {
-      verbose_ss << "Warmup run for batch = " << mBatchDimMin << std::endl;
-      double start = get_time_msec();
-      Ort::IoBinding bindings(*mSession);
-      setBindings(mBatchDimMin, bindings);
-      mSession->Run(mRunOptions, bindings);
-      double end = get_time_msec();
-      verbose_ss << "Time required to run: " << (end - start) << " milliseconds"
-                 << std::endl;
-    }
-
-    std::sort(std::begin(mPreferredBatchSizes), std::end(mPreferredBatchSizes));
-    for (int64_t pref_batch : mPreferredBatchSizes) {
-      verbose_ss << "Warmup run for batch = " << pref_batch << std::endl;
-      double start = get_time_msec();
-      Ort::IoBinding bindings(*mSession);
-      setBindings(pref_batch, bindings);
-      mSession->Run(mRunOptions, bindings);
-      double end = get_time_msec();
-      verbose_ss << "Time required to run: " << (end - start) << " milliseconds"
-                 << std::endl;
-    }
+  // make warmup runs to initialize the engines (crucial for all dims for TRT)
+  {
+    verbose_ss << "Warmup run for batch = " << mBatchDimMax << std::endl;
+    double start = get_time_msec();
+    Ort::IoBinding bindings(*mSession);
+    setBindings(mBatchDimMax, bindings);
+    mSession->Run(mRunOptions, bindings);
+    double end = get_time_msec();
+    verbose_ss << "Time required to run: " << (end - start) << " milliseconds"
+                << std::endl;
   }
+
+  // no need to generate batch=1 engine if we always padd to preferred batch
+  // sizes
+  if (mPaddBatchSize == false) {
+    verbose_ss << "Warmup run for batch = " << mBatchDimMin << std::endl;
+    double start = get_time_msec();
+    Ort::IoBinding bindings(*mSession);
+    setBindings(mBatchDimMin, bindings);
+    mSession->Run(mRunOptions, bindings);
+    double end = get_time_msec();
+    verbose_ss << "Time required to run: " << (end - start) << " milliseconds"
+                << std::endl;
+  }
+
+  std::sort(std::begin(mPreferredBatchSizes), std::end(mPreferredBatchSizes));
+  for (int64_t pref_batch : mPreferredBatchSizes) {
+    if (pref_batch == mBatchDimMax) continue; // already ran max batch
+    verbose_ss << "Warmup run for batch = " << pref_batch << std::endl;
+    double start = get_time_msec();
+    Ort::IoBinding bindings(*mSession);
+    setBindings(pref_batch, bindings);
+    mSession->Run(mRunOptions, bindings);
+    double end = get_time_msec();
+    verbose_ss << "Time required to run: " << (end - start) << " milliseconds"
+                << std::endl;
+  }
+
   mRunOptions.SetRunLogSeverityLevel(2);
   // return empty string if we reached here
   return std::string();
