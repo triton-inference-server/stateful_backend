@@ -897,9 +897,6 @@ TRITONBACKEND_ModelInstanceExecute(
           .c_str());
 #endif
 
-  bool supports_batching = false;
-  RETURN_IF_ERROR(model_state->SupportsFirstDimBatching(&supports_batching));
-
   // 'responses' is initialized with the response objects below and
   // if/when an error response is sent the corresponding entry in
   // 'responses' is set to nullptr to indicate that that response has
