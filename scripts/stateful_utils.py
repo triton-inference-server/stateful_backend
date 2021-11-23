@@ -48,11 +48,13 @@ def remove_container_by_name(cnt_name):
   cnt: Container
   for cnt in dcl.containers.list(all=True, filters={"name": cnt_name}):
     if cnt_name == cnt.name:
+      print("Removing container: ", cnt_name)
       remove_container(cnt)
   return
 
 def remove_image_by_name(img_name):
   dcl = get_docker_client()
+  print("Removing image: ", img_name)
   dcl.images.remove(img_name)
   return
 

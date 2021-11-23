@@ -36,18 +36,26 @@ def remove_custom_image():
   print("Removing the old image and its containers ...")
   cnt_list_cmd = "docker ps -a"
   try:
-    output = subprocess.check_output( shlex.split( cnt_list_cmd, posix=(sys.version != "nt") ) )
+    output = subprocess.check_output( shlex.split( cnt_list_cmd, posix=(sys.version != "nt") ) ).decode().strip()
     for ln in output.splitlines():
       ln_parts = ln.split()
       if ln_parts[1] == stateful_config.STATEFUL_BACKEND_IMAGE \
           or ln_parts[1] == stateful_config.STATEFUL_BACKEND_REPO:
         print("Stopping and removing container :", ln_parts[-1])
         stateful_utils.remove_container_by_name(ln_parts[-1])
+  except Exception as ex:
+    print("ERROR: Couldn't remove existing containers.", ex)
+    exit(1)
+  try:
     # now remove the container
     stateful_utils.remove_image_by_name(stateful_config.STATEFUL_BACKEND_IMAGE)
-  except:
-    print("ERROR: Couldn't get the list of containers.")
-    exit(1)
+  except Exception as ex:
+    if str(ex).find("Not such image"):
+      print("WARNING:", ex)
+      pass
+    else:
+      print("ERROR: Couldn't remove existing image", ex)
+      exit(1)
   return
 
 def build_custom_image():
@@ -56,9 +64,9 @@ def build_custom_image():
       stateful_config.TRITON_REPO_VERSION)
   print("Building the custom backend image ...", build_cmd)
   try:
-    output = subprocess.check_output( shlex.split( build_cmd, posix=(sys.version != "nt") ) )
-  except:
-    print("ERROR: Couldn't build the custom backend image.")
+    output = subprocess.check_output( shlex.split( build_cmd, posix=(sys.version != "nt") ) ).decode().strip()
+  except Exception as ex:
+    print("ERROR: Couldn't build the custom backend image.", ex)
     exit(1)
   return
 
