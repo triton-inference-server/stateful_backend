@@ -253,7 +253,7 @@ TrtOnnxModel::Prepare(
     }
     OrtCUDAProviderOptions cuda_options;
     cuda_options.device_id = mGpuId;
-    cuda_options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearch::EXHAUSTIVE;
+    cuda_options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearch::OrtCudnnConvAlgoSearchExhaustive;
     cuda_options.gpu_mem_limit = std::numeric_limits<size_t>::max();
     cuda_options.arena_extend_strategy = 0;
     cuda_options.do_copy_in_default_stream = 1;

@@ -83,6 +83,10 @@ RUN rm -f /usr/local/bin/cmake
 # Workspace dir
 WORKDIR /workspace
 
+# Add the TRT 8.2 tarball to the docker image - no need to do this once 21.12 is available
+ADD ./TensorRT-8.2.1.4.Linux.x86_64-gnu.cuda-11.4.cudnn8.2.tar.gz /workspace/
+
 # Build ONNXRT release branch
-RUN git clone --branch rel-1.9.0  https://github.com/microsoft/onnxruntime.git && cd /workspace/onnxruntime && git checkout 4daa14bc74b5378d5fcb0d6de063a9fa8bd42eac
-RUN cd /workspace/onnxruntime && ./build.sh --use_cuda --cuda_home /usr/local/cuda-11.4/ --cuda_version 11.4 --cudnn_home /usr/lib/x86_64-linux-gnu/ --use_tensorrt --tensorrt_home /usr/lib/x86_64-linux-gnu/ --parallel 8 --build_shared_lib --config Release --skip_tests
+#RUN git clone --branch rel-1.9.0  https://github.com/microsoft/onnxruntime.git && cd /workspace/onnxruntime && git checkout 4daa14bc74b5378d5fcb0d6de063a9fa8bd42eac
+RUN git clone --branch stevenlix/trt82  https://github.com/microsoft/onnxruntime.git && cd /workspace/onnxruntime && git checkout 53e8860ea0b0ad274ab6d7b9851d931bb37f4ed1
+RUN cd /workspace/onnxruntime && ./build.sh --use_cuda --cuda_home /usr/local/cuda-11.4/ --cuda_version 11.4 --cudnn_home /usr/lib/x86_64-linux-gnu/ --use_tensorrt --tensorrt_home /workspace/TensorRT-8.2.1.4 --parallel 8 --build_shared_lib --config Release --skip_tests
