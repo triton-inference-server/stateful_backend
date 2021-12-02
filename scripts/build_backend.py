@@ -24,8 +24,12 @@ import os
 import sys
 import shlex
 import subprocess
+import argparse
+
 import stateful_utils
 import stateful_config
+
+FLAGS = None
 
 def is_custom_image_ready():
   return stateful_utils.is_image_ready(stateful_config.STATEFUL_BACKEND_IMAGE)
@@ -59,9 +63,8 @@ def remove_custom_image():
   return
 
 def build_custom_image():
-  build_cmd = ("docker build --tag {0} -f docker/Dockerfile.backend " \
-    + " --build-arg BASE_IMAGE_VERSION={1} .").format(stateful_config.STATEFUL_BACKEND_IMAGE, \
-      stateful_config.TRITON_REPO_VERSION)
+  build_cmd = (f"docker build --tag {stateful_config.STATEFUL_BACKEND_IMAGE} -f docker/Dockerfile.backend " \
+    + f" --build-arg BASE_IMAGE_VERSION={stateful_config.TRITON_REPO_VERSION} {FLAGS.docker_build_extra_args} .")
   print("Building the custom backend image ...", build_cmd)
   try:
     output = subprocess.check_output( shlex.split( build_cmd, posix=(sys.version != "nt") ) ).decode().strip()
@@ -80,10 +83,10 @@ def setup_env(root_dir):
   }
   return
 
-def get_backend_build_container(force_rebuild_image, with_gpus):
-  if force_rebuild_image:
+def get_backend_build_container():
+  if FLAGS.force_rebuild_image:
     remove_custom_image()
-  if with_gpus: # if with_gpu is set, remove the old container and create new
+  if FLAGS.with_gpus: # if with_gpu is set, remove the old container and create new
     stateful_utils.remove_container_by_name(stateful_config.STATEFUL_BACKEND_CONTAINER_NAME)
   if not is_custom_image_ready():
     build_custom_image()
@@ -91,14 +94,14 @@ def get_backend_build_container(force_rebuild_image, with_gpus):
   cnt = stateful_utils.get_running_container(stateful_config.STATEFUL_BACKEND_CONTAINER_NAME)
   if cnt is None:
     cnt = stateful_utils.create_container(stateful_config.STATEFUL_BACKEND_IMAGE, \
-        cnt_name=stateful_config.STATEFUL_BACKEND_CONTAINER_NAME, with_gpus=with_gpus, \
+        cnt_name=stateful_config.STATEFUL_BACKEND_CONTAINER_NAME, with_gpus=FLAGS.with_gpus, \
         shm_size=stateful_config.TRITON_SHM_SIZE, memlock=stateful_config.TRITON_MEMLOCK, \
         stack_size=stateful_config.TRITON_STACK, volumes=BACKEND_VOLUMES)
     cnt.start()
   return cnt
 
-def build_custom_backend(force_rebuild_image, with_gpus):
-  cnt = get_backend_build_container(force_rebuild_image, with_gpus)
+def build_custom_backend():
+  cnt = get_backend_build_container()
   
   print("Building the custom backend ...")
   status = cnt.exec_run(stateful_config.STATEFUL_BACKEND_BUILD_SETUP_CMD)
@@ -114,25 +117,53 @@ def build_custom_backend(force_rebuild_image, with_gpus):
   print(status[1].decode())
   assert status[0] == 0
 
-def DoEverything(root_dir, args: list):
+  if FLAGS.stop_containers: # autoremove is set during creation
+    print("Stopping the container:", cnt.name)
+    cnt.stop()
+  return
+
+def DoEverything(root_dir):
+  if FLAGS.root_dir != "":
+    root_dir = FLAGS.root_dir
   setup_env(root_dir=root_dir)
-  force_rebuild_image = False
-  with_gpus = False
-  for arg in args:
-    if arg == "--force_rebuild_image":
-      force_rebuild_image = True
-    if arg == "--with_gpus":
-      with_gpus = True
   print("Configuration: ")
-  print("  Force rebuild image :", force_rebuild_image)
-  print("  Use GPUs in docker :", with_gpus)
-  build_custom_backend(force_rebuild_image, with_gpus)
+  print("  Root directory to be used :", root_dir)
+  # print("  Force rebuild image :", FLAGS.force_rebuild_image)
+  # print("  Use GPUs in docker :", FLAGS.with_gpus)
+  # print("  Stop/remove containers afterward :", FLAGS.stop_containers)
+  # print("  Docker build extra flags :", FLAGS.docker_build_extra_flags)
+  build_custom_backend()
+  return
+
+def parse_args():
+  parser = argparse.ArgumentParser("Script to build the stateful backend.")
+  parser.add_argument("--force_rebuild_image", 
+                      action='store_true', 
+                      help="Remove old images/containers and create new ones.")
+  parser.add_argument("--with_gpus", 
+                      action='store_true', 
+                      help="Whether docker containers will be created with GPU support or not.")
+  parser.add_argument("--stop_containers", 
+                      action='store_true', 
+                      help="Stop/remove the containers once build is done.")
+  parser.add_argument("--docker_build_extra_args", 
+                      type=str, default="", 
+                      help="Extra flags to pass to the 'docker build' command.")
+  parser.add_argument("--root_dir", 
+                      type=str, default="", 
+                      help="The path to root directory where CMakeLists.txt file is present.")
+  
+  # update the global variable FLAGS
+  global FLAGS
+  FLAGS = parser.parse_args()
+  print("ARGS:", " ".join(f'{arg}={val}' for arg, val in vars(FLAGS).items()))
   return
 
 def main():
   root_dir = os.path.join(os.path.abspath(sys.path[0]), os.pardir)
-  DoEverything(root_dir, sys.argv)
+  DoEverything(root_dir)
   return
 
 if __name__ == "__main__":
+  parse_args()
   main()

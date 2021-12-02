@@ -27,8 +27,9 @@ import build_backend
 
 def main():
   root_dir = os.path.abspath(sys.path[0])
-  build_backend.DoEverything(root_dir, sys.argv)
+  build_backend.DoEverything(root_dir)
   return
 
 if __name__ == "__main__":
+  build_backend.parse_args()
   main()
