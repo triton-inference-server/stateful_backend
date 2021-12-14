@@ -32,6 +32,7 @@ project(tritononnxstatefulbackend LANGUAGES C CXX CUDA)
 #
 option(TRITON_ENABLE_GPU "Enable GPU support in backend" ON)
 option(TRITON_ENABLE_STATS "Include statistics collections in backend" ON)
+option(WITH_CUSTOM_ORT "Whether building inside the custom-built ORT container or not" OFF)
 
 file (STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/NGC_VERSION" NGC_VERSION)
 message("CMAKE Triton repo tag is set to: ${NGC_VERSION}")
@@ -78,8 +79,28 @@ FetchContent_MakeAvailable(repo-common repo-core repo-backend)
 #
 configure_file(src/libtriton_stateful.ldscript libtriton_stateful.ldscript COPYONLY)
 
-# Move the ORT Libraries to the build directory
-file(COPY /workspace/onnxruntime/build/Linux/Release/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/ort-lib)
+# Setup the include/lib directories for ORT based on the specified build path
+if (WITH_CUSTOM_ORT)
+  # Move the ORT Libraries to the build directory
+  message("Setting up for custom ORT image ...")
+  file(COPY /workspace/onnxruntime/build/Linux/Release/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/ort-lib)
+  set(ORT_INC_DIRS
+    /workspace/onnxruntime/include/onnxruntime/core/session
+    /workspace/onnxruntime/include/onnxruntime/core/providers/tensorrt
+    /workspace/onnxruntime/include/onnxruntime/core/providers/cuda
+  )
+  set(ORT_LIB_DIRS
+    ${CMAKE_CURRENT_BINARY_DIR}/ort-lib
+  )
+else()
+  message("Setting up for stock TRT image ...")
+  set(ORT_INC_DIRS
+    /workspace/onnxruntime/include
+  )
+  set(ORT_LIB_DIRS
+    /workspace/onnxruntime/lib
+  )
+endif()
 
 set(TRT_SAMPLE_PATH /workspace/tensorrt/samples)
 
@@ -101,9 +122,7 @@ target_include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${TRT_SAMPLE_PATH}
     ${TRT_SAMPLE_PATH}/common
-    /workspace/onnxruntime/include/onnxruntime/core/session
-    /workspace/onnxruntime/include/onnxruntime/core/providers/tensorrt
-    /workspace/onnxruntime/include/onnxruntime/core/providers/cuda
+    ${ORT_INC_DIRS}
 )
 
 target_compile_features(triton-stateful-backend PRIVATE cxx_std_11)
@@ -126,7 +145,7 @@ target_link_libraries(
 target_link_directories(
   triton-stateful-backend
   PRIVATE
-  ${CMAKE_CURRENT_BINARY_DIR}/ort-lib
+  ${ORT_LIB_DIRS}
 )
 
 set_target_properties(

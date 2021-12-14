@@ -117,11 +117,14 @@ def get_running_container(cnt_name:str) -> Container:
 def create_container(img_name:str, cnt_name:str=None, auto_remove=True, \
                   with_gpus=True, ports=None, \
                   shm_size=None, memlock=None, \
-                  stack_size=None, volumes=None):
+                  stack_size=None, volumes=None, \
+                  as_root=False):
   # set the user parameter
-  uid = subprocess.check_output(shlex.split("id -u")).decode().strip()
-  gid = subprocess.check_output(shlex.split("id -g")).decode().strip()
-  user_param = uid + ":" + gid
+  user_param = None
+  if not as_root:
+    uid = subprocess.check_output(shlex.split("id -u")).decode().strip()
+    gid = subprocess.check_output(shlex.split("id -g")).decode().strip()
+    user_param = uid + ":" + gid
   # pull the image if it is missing
   if not is_image_ready(img_name):
     pull_image(img_name)

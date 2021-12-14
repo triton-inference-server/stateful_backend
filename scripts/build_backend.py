@@ -84,42 +84,81 @@ def setup_env(root_dir):
   return
 
 def get_backend_build_container():
-  if FLAGS.force_rebuild_image:
-    remove_custom_image()
-  if FLAGS.with_gpus: # if with_gpu is set, remove the old container and create new
-    stateful_utils.remove_container_by_name(stateful_config.STATEFUL_BACKEND_CONTAINER_NAME)
-  if not is_custom_image_ready():
-    build_custom_image()
+  cnt = None
+  if FLAGS.build_with_custom_image:
+    print("Using the custom image ...")
+    if FLAGS.force_rebuild_image:
+      remove_custom_image()
+    if FLAGS.with_gpus: # if with_gpu is set, remove the old container and create new
+      stateful_utils.remove_container_by_name(stateful_config.STATEFUL_BACKEND_CONTAINER_NAME)
+    if not is_custom_image_ready():
+      build_custom_image()
+    # Get the custom container
+    cnt_name = stateful_config.STATEFUL_BACKEND_CONTAINER_NAME
+    cnt_image = stateful_config.STATEFUL_BACKEND_IMAGE
+  else:
+    print("Using the stock TensorRT image ...")
+    # Get the stock TRT container
+    cnt_name = stateful_config.TENSORRT_CONTAINER_NAME
+    cnt_image = stateful_config.TENSORRT_IMAGE
 
-  cnt = stateful_utils.get_running_container(stateful_config.STATEFUL_BACKEND_CONTAINER_NAME)
+  cnt = stateful_utils.get_running_container(cnt_name)
   if cnt is None:
-    cnt = stateful_utils.create_container(stateful_config.STATEFUL_BACKEND_IMAGE, \
-        cnt_name=stateful_config.STATEFUL_BACKEND_CONTAINER_NAME, with_gpus=FLAGS.with_gpus, \
+    cnt = stateful_utils.create_container(cnt_image, \
+        cnt_name=cnt_name, with_gpus=FLAGS.with_gpus, \
         shm_size=stateful_config.TRITON_SHM_SIZE, memlock=stateful_config.TRITON_MEMLOCK, \
-        stack_size=stateful_config.TRITON_STACK, volumes=BACKEND_VOLUMES)
+        stack_size=stateful_config.TRITON_STACK, volumes=BACKEND_VOLUMES, \
+        as_root=True)
     cnt.start()
+    # if stock TRT container, need to prepare the container
+    if not FLAGS.build_with_custom_image:
+      print(f"Running command '{stateful_config.TENSORRT_CONTAINER_PREBUILD_CMD}' to prepare the container ...")
+      status = cnt.exec_run(stateful_config.TENSORRT_CONTAINER_PREBUILD_CMD)
+      if status[0] != 0:
+        print(status[1].decode())
+      assert status[0] == 0
   return cnt
 
 def build_custom_backend():
   cnt = get_backend_build_container()
   
-  print("Building the custom backend ...")
-  status = cnt.exec_run(stateful_config.STATEFUL_BACKEND_BUILD_SETUP_CMD)
-  print(status[1].decode())
-  assert status[0] == 0
-  status = cnt.exec_run(stateful_config.STATEFUL_BACKEND_BUILD_CMAKE_CMD, workdir=stateful_config.STATEFUL_BACKEND_WORKDIR)
-  print(status[1].decode())
-  assert status[0] == 0
-  status = cnt.exec_run(stateful_config.STATEFUL_BACKEND_BUILD_MAKE_CMD, workdir=stateful_config.STATEFUL_BACKEND_WORKDIR)
-  print(status[1].decode())
-  assert status[0] == 0
-  status = cnt.exec_run(stateful_config.STATEFUL_BACKEND_BUILD_INSTALL_CMD, workdir=stateful_config.STATEFUL_BACKEND_WORKDIR)
-  print(status[1].decode())
-  assert status[0] == 0
-
-  if FLAGS.stop_containers: # autoremove is set during creation
-    print("Stopping the container:", cnt.name)
-    cnt.stop()
+  try:
+    print("Building the custom backend ...")
+    if FLAGS.cleanup_before_building:
+      print("Removing the old build directory ...")
+      status = cnt.exec_run(stateful_config.STATEFUL_BACKEND_BUILD_CLEANUP_CMD)
+      print(status[1].decode())
+      assert status[0] == 0
+    else:
+      print("Removing the old CMakeCache.txt ...")
+      status = cnt.exec_run(stateful_config.STATEFUL_BACKEND_BUILD_CMAKE_CLEANUP_CMD)
+      print(status[1].decode())
+      assert status[0] == 0
+    status = cnt.exec_run(stateful_config.STATEFUL_BACKEND_BUILD_SETUP_CMD)
+    print(status[1].decode())
+    assert status[0] == 0
+    cmake_opts = stateful_config.STATEFUL_BACKEND_BUILD_CMAKE_OPTS
+    if FLAGS.build_with_custom_image:
+      cmake_opts += " -DWITH_CUSTOM_ORT=ON "
+    cmake_cmd = "cmake " + cmake_opts + " .. "
+    print(cmake_cmd)
+    status = cnt.exec_run(cmake_cmd, workdir=stateful_config.STATEFUL_BACKEND_WORKDIR)
+    print(status[1].decode())
+    assert status[0] == 0
+    status = cnt.exec_run(stateful_config.STATEFUL_BACKEND_BUILD_MAKE_CMD, workdir=stateful_config.STATEFUL_BACKEND_WORKDIR)
+    print(status[1].decode())
+    assert status[0] == 0
+    status = cnt.exec_run(stateful_config.STATEFUL_BACKEND_BUILD_INSTALL_CMD, workdir=stateful_config.STATEFUL_BACKEND_WORKDIR)
+    print(status[1].decode())
+    assert status[0] == 0
+  except Exception as ex:
+    print(ex)
+    print("NOTE: Make sure to not mix the artifacts from two different build process. Try running with '--cleanup_before_building' .")
+    exit(1)
+  finally:
+    if FLAGS.stop_containers: # autoremove is set during creation
+      print("Stopping the container:", cnt.name)
+      cnt.stop()
   return
 
 def DoEverything(root_dir):
@@ -146,6 +185,13 @@ def parse_args():
   parser.add_argument("--stop_containers", 
                       action='store_true', 
                       help="Stop/remove the containers once build is done.")
+  parser.add_argument("--build_with_custom_image", 
+                      action='store_true', 
+                      help="Whether to build and use custom docker image or not.")
+  parser.add_argument("--cleanup_before_building", 
+                      action='store_true', 
+                      help="Whether or not to remove the old build directory before building.")
+
   parser.add_argument("--docker_build_extra_args", 
                       type=str, default="", 
                       help="Extra flags to pass to the 'docker build' command.")
