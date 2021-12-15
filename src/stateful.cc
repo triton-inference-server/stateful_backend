@@ -107,7 +107,6 @@ class ModelState : public BackendModel {
   int64_t max_sequence_idle_microseconds_;
   int64_t max_candidate_sequences_;
   std::vector<int64_t> pref_batch_sizes_;
-  bool is_corrId_string;
 
   std::string path_;
   std::string onnx_file_name_;
@@ -234,7 +233,6 @@ ModelState::InitModelState()
   max_sequence_idle_microseconds_ = 100000000;
   max_candidate_sequences_ = 1280;
   pref_batch_sizes_ = {64};
-  is_corrId_string = false;
   ort_ep_name_ = "trt";
   compute_precision_name_ = "fp16";
   store_states_as_fp16_ = "0";
@@ -283,16 +281,6 @@ ModelState::InitModelState()
       LOG_MESSAGE(
           TRITONSERVER_LOG_INFO,
           (std::string("End Name = ") + end_tensor_name_).c_str());
-
-    } else if (control_type.compare("CONTROL_SEQUENCE_CORRID") == 0) {
-      std::string control_data_type;
-      RETURN_IF_ERROR(control.MemberAsString("data_type", &control_data_type));
-      LOG_MESSAGE(
-          TRITONSERVER_LOG_INFO,
-          (std::string("CORRID Data Type = ") + control_data_type).c_str());
-      if (control_data_type.compare("TYPE_STRING") == 0) {
-        is_corrId_string = true;
-      }
     }
   }
   IGNORE_ERROR(sequence_batching.MemberAsInt(
@@ -928,28 +916,10 @@ TRITONBACKEND_ModelInstanceExecute(
     GUARDED_RESPOND_IF_ERROR(
         responses, r, TRITONBACKEND_RequestId(request, &request_id));
 
-    /**
-     * TODO:
-     *  Managing only string sequence ids in the backend for now.
-     *  UINT64 sequence ids are also converted to string for convenience.
-     *  Once the InferenceRequest::SequenceId class is in common repo,
-     *  we can reuse that implementation.
-     */
-    std::string correlation_id;
-    if (!model_state->is_corrId_string) {
-      uint64_t u64_correlation_id = 0;
-      GUARDED_RESPOND_IF_ERROR(
-          responses, r,
-          TRITONBACKEND_RequestCorrelationId(request, &u64_correlation_id));
-      correlation_id = std::to_string(u64_correlation_id);
-    } else {
-      const char* str_correlation_id = "";
-      GUARDED_RESPOND_IF_ERROR(
-          responses, r,
-          TRITONBACKEND_RequestCorrelationIdString(
-              request, &str_correlation_id));
-      correlation_id = std::string(str_correlation_id);
-    }
+    uint64_t correlation_id = 0;
+    GUARDED_RESPOND_IF_ERROR(
+        responses, r,
+        TRITONBACKEND_RequestCorrelationId(request, &correlation_id));
 
     TRITONBACKEND_Input* input = nullptr;
     TRITONSERVER_MemoryType input_memory_type = TRITONSERVER_MEMORY_CPU;

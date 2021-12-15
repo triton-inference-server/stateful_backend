@@ -246,7 +246,7 @@ class InferenceTask {
  public:
   int mStart;
   int mEnd;
-  std::string mCorrId;
+  uint64_t mCorrId;
   const void* mInput[MAX_IO_NUM];
   void* mOutput[MAX_IO_NUM];
   std::string err_msg;  // will be used to track individual error
@@ -359,9 +359,9 @@ class TrtOnnxModel {
       log_stream_t& verbose_ss, std::vector<InferenceTask>& inferenceTasks,
       int batchSize);
 
-  std::unordered_map<std::string, std::pair<int, time_point_t>> mStoreIdMap;
+  std::unordered_map<uint64_t, std::pair<int, time_point_t>> mStoreIdMap;
   std::set<int> mStoreAvailableIds;
-  std::vector<std::string> mCorrIdToDelete;
+  std::vector<uint64_t> mCorrIdToDelete;
 
   // Engines used for inference. The first is used for resizing inputs, the
   // second for prediction. SampleUniquePtr<nvinfer1::ICudaEngine>

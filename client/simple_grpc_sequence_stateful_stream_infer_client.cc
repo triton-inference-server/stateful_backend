@@ -84,8 +84,7 @@ StreamSend(
     bool start_of_sequence, bool end_of_sequence, const int32_t index)
 {
   tc::InferOptions options(model_name);
-  // options.sequence_id_ = sequence_id;
-  options.sequence_id_str_ = std::to_string(sequence_id);
+  options.sequence_id_ = sequence_id;
   options.sequence_start_ = start_of_sequence;
   options.sequence_end_ = end_of_sequence;
   options.request_id_ =
