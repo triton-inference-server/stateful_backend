@@ -130,7 +130,7 @@ def RunClient(root_dir):
   status = ccnt.exec_run(stateful_config.TRITON_CLIENT_RUN_CMD, workdir=stateful_config.TRITON_CLIENT_WORKDIR)
   print(status[1].decode())
   assert status[0] == 0
-  return
+  return ccnt
 
 def DoEverything(root_dir):
   if build_backend.FLAGS.root_dir != "":
@@ -143,8 +143,9 @@ def DoEverything(root_dir):
   # 2. Run the server
   scnt = RunServer(root_dir)
   # 3. Run the client
+  ccnt = None
   try:
-    RunClient(root_dir)
+    ccnt = RunClient(root_dir)
   except:
     err_happened = True
     print("Client error")
@@ -155,6 +156,11 @@ def DoEverything(root_dir):
     print("TEST FAILED!")
     exit(1)
   print("TEST PASSED!")
+  if build_backend.FLAGS.stop_containers:
+    if scnt is not None:
+      scnt.stop()
+    if ccnt is not None:
+      ccnt.stop()
   return
 
 def main():
