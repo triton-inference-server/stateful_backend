@@ -45,7 +45,10 @@ def setup_env(root_dir):
   return
 
 def run_server_thread_func(cnt):
-  status = cnt.exec_run(stateful_config.TRITON_SERVER_CMD, stream=True, environment=stateful_config.TRITON_SERVER_ENV)
+  custom_env = None
+  if build_backend.FLAGS.build_with_custom_image:
+    custom_env = stateful_config.TRITON_SERVER_ENV
+  status = cnt.exec_run(stateful_config.TRITON_SERVER_CMD, stream=True, environment=custom_env)
   outgen = status[1]
   global g_server_started, g_server_exited, g_server_crashed
   g_server_started = g_server_exited = g_server_crashed = False
@@ -87,6 +90,7 @@ def stop_server(scnt):
   return
 
 def RunServer(root_dir):
+  print("Starting server ...")
   # create new container if not found
   scnt = stateful_utils.get_running_container(stateful_config.TRITON_SERVER_CONTAINER_NAME)
   if scnt is None:
@@ -99,9 +103,10 @@ def RunServer(root_dir):
   assert scnt != None
   scnt.reload()
   assert scnt.status == "running"
-  status = scnt.exec_run(stateful_config.TRITON_SERVER_ONNXRT_CLEAN_CMD)
-  # print(status[0], status[1].decode())
-  assert status[0] == 0
+  if build_backend.FLAGS.build_with_custom_image:
+    status = scnt.exec_run(stateful_config.TRITON_SERVER_ONNXRT_CLEAN_CMD)
+    # print(status[0], status[1].decode())
+    assert status[0] == 0
   status = scnt.exec_run(stateful_config.TRITON_SERVER_COPY_BACKEND_CMD)
   # print(status[0], status[1].decode())
   assert status[0] == 0
@@ -109,6 +114,7 @@ def RunServer(root_dir):
   return scnt
 
 def RunClient(root_dir):
+  print("Starting client ...")
   # create new container if not found
   ccnt = stateful_utils.get_running_container(stateful_config.TRITON_CLIENT_CONTAINER_NAME)
   if ccnt is None:
