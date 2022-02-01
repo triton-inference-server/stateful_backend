@@ -233,7 +233,6 @@ ModelState::InitModelState()
   max_batch_size_ = 64;
   max_sequence_idle_microseconds_ = 100000000;
   max_candidate_sequences_ = 1280;
-  pref_batch_sizes_ = {64};
   is_corrId_string = false;
   ort_ep_name_ = "trt";
   compute_precision_name_ = "fp16";
@@ -242,6 +241,7 @@ ModelState::InitModelState()
   trt_cache_dir_ = "/tmp";
 
   IGNORE_ERROR(model_config_.MemberAsInt("max_batch_size", &max_batch_size_));
+  pref_batch_sizes_ = {max_batch_size_};
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
       (std::string("Max batch size = ") + std::to_string(max_batch_size_))
