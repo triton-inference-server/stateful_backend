@@ -27,6 +27,12 @@ from docker.models.images import Image
 from docker.types.containers import DeviceRequest, Ulimit
 import subprocess
 import shlex
+from datetime import datetime
+
+def LogPrint(*args, **kwargs):
+  now = datetime.now()
+  print(f"[{now}] ", *args, **kwargs)
+  return
 
 docker_client = None
 def get_docker_client():
@@ -48,13 +54,13 @@ def remove_container_by_name(cnt_name):
   cnt: Container
   for cnt in dcl.containers.list(all=True, filters={"name": cnt_name}):
     if cnt_name == cnt.name:
-      print("Removing container: ", cnt_name)
+      LogPrint("Removing container: ", cnt_name)
       remove_container(cnt)
   return
 
 def remove_image_by_name(img_name):
   dcl = get_docker_client()
-  print("Removing image: ", img_name)
+  LogPrint("Removing image: ", img_name)
   dcl.images.remove(img_name)
   return
 
@@ -62,10 +68,10 @@ def remove_image_with_containers(img_name):
   dcl = get_docker_client()
   cnt: Container
   for cnt in dcl.containers.list(all=True):
-    print("Found container :", cnt.name, cnt.image.tags)
+    LogPrint("Found container :", cnt.name, cnt.image.tags)
     for tag in cnt.image.tags:
       if tag == img_name:
-        print("Stopping and removing container :", cnt.name)
+        LogPrint("Stopping and removing container :", cnt.name)
         remove_container(cnt)
   # now that all containers are stopped/removed, remove the image
   dcl.images.remove(img_name)
@@ -104,6 +110,7 @@ def is_container_running(cnt_name:str) -> Container:
   return None
 
 def get_running_container(cnt_name:str) -> Container:
+  LogPrint("Looking for running container: ", cnt_name)
   dcl = get_docker_client()
   cnt: Container
   cnt = is_container_ready(cnt_name)
@@ -128,7 +135,7 @@ def create_container(img_name:str, cnt_name:str=None, auto_remove=True, \
   # pull the image if it is missing
   if not is_image_ready(img_name):
     pull_image(img_name)
-  print("Creating new container:{0} from Image: {1}".format(cnt_name, img_name))
+  LogPrint("Creating new container:{0} from Image: {1}".format(cnt_name, img_name))
   dcl = get_docker_client()
   devs = []
   if with_gpus:
