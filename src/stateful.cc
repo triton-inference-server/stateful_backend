@@ -42,6 +42,7 @@
 
 #include <onnxruntime_cxx_api.h>
 #include "stateful.h"
+#include "response_util.h"
 
 namespace triton { namespace backend { namespace stateful {
 
@@ -1066,12 +1067,16 @@ TRITONBACKEND_ModelInstanceExecute(
 
   uint64_t comp_start_ns = 0, comp_end_ns = 0;
 
+  const bool send_response_early = true;
+  void* vp_responses = send_response_early ?
+              reinterpret_cast<void*>(responses.data()) : nullptr;
   std::string err_msg;
   try {
     // Now that we set all input / output, we can do the inferencing
     std::stringstream ss_logs;
     err_msg = instance_state->trt_onnx_model_->InferTasks(
-        ss_logs, instance_state->inference_tasks_, request_count, comp_start_ns,
+        ss_logs, instance_state->inference_tasks_, request_count,
+        vp_responses, comp_start_ns,
         comp_end_ns);
 
     std::string str_logs = ss_logs.str();
@@ -1127,25 +1132,14 @@ TRITONBACKEND_ModelInstanceExecute(
     return nullptr;
   }
 
+  if (!send_response_early) {
+    // Send the responses
+    triton::backend::stateful::utils::SendResponses(
+      instance_state->inference_tasks_, request_count,
+      reinterpret_cast<void*>(responses.data()));
+  }
 
   for (uint32_t r = 0; r < request_count; ++r) {
-    // If we get to this point then there hasn't been any error for the whole
-    // batch and the response is complete (error or not) and we can send it.
-    // This is the last (and only) response that we are sending for the request
-    // so we must mark it FINAL. If there is an error when sending all we can do
-    // is log it.
-    TRITONSERVER_Error* err = nullptr;                           // success
-    if (!instance_state->inference_tasks_[r].err_msg.empty()) {  // error
-      err = TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          instance_state->inference_tasks_[r].err_msg.c_str());
-      instance_state->inference_tasks_[r]
-          .err_msg.clear();  // clear the error for next time
-    }
-    LOG_IF_ERROR(
-        TRITONBACKEND_ResponseSend(
-            responses[r], TRITONSERVER_RESPONSE_COMPLETE_FINAL, err),
-        "failed sending response");
 
     // Done with requests...
     //
@@ -1160,20 +1154,19 @@ TRITONBACKEND_ModelInstanceExecute(
     LOG_IF_ERROR(
         TRITONBACKEND_ModelInstanceReportStatistics(
             instance_state->TritonModelInstance(), request,
-            (responses[r] != nullptr && err == nullptr) /* success */,
+            (responses[r] != nullptr &&
+             instance_state->inference_tasks_[r].err_msg.empty()) /* success */,
             exec_start_ns, comp_start_ns, comp_end_ns, exec_end_ns),
         "failed reporting request statistics");
+
+    // clear any error for next time
+    instance_state->inference_tasks_[r].err_msg.clear();
 
     // NOTE: Whether there was an error for individual requests or not,
     // once we send the response, we need to release the request.
     LOG_IF_ERROR(
         TRITONBACKEND_RequestRelease(request, TRITONSERVER_REQUEST_RELEASE_ALL),
         "failed releasing request");
-
-    // Now delete the Error object
-    if (err != nullptr) {
-      TRITONSERVER_ErrorDelete(err);
-    }
   }
 
   // Report the entire batch statistics.

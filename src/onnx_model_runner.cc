@@ -36,6 +36,7 @@
 
 #include "onnx_model_runner.h"
 #include "triton/backend/backend_common.h"
+#include "response_util.h"
 
 #include <sys/time.h>
 
@@ -1079,19 +1080,20 @@ TrtOnnxModel::restoreStates_CPU_FP16(
 
 void
 TrtOnnxModel::storeStates(
-    std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride)
+    std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride,
+    cudaStream_t &cudaStreamToUse)
 {
   if (mUseGpu) {
     if (mStoreStatesAsFp16) {
       launchStoreGPUKernel_FP16(
           reinterpret_cast<__half**>(mStorageBufferDevice),
           mOutputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
-          mNumStates, mStoreIdDevice, batchSize, batchStride, mCudaStreamExe);
+          mNumStates, mStoreIdDevice, batchSize, batchStride, cudaStreamToUse);
     } else {
       launchStoreGPUKernel_FP32(
           reinterpret_cast<float**>(mStorageBufferDevice),
           mOutputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
-          mNumStates, mStoreIdDevice, batchSize, batchStride, mCudaStreamExe);
+          mNumStates, mStoreIdDevice, batchSize, batchStride, cudaStreamToUse);
     }
   } else {
     if (mStoreStatesAsFp16) {
@@ -1104,19 +1106,20 @@ TrtOnnxModel::storeStates(
 
 void
 TrtOnnxModel::restoreStates(
-    std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride)
+    std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride,
+    cudaStream_t &cudaStreamToUse)
 {
   if (mUseGpu) {
     if (mStoreStatesAsFp16) {
       launchRestoreGPUKernel_FP16(
           reinterpret_cast<__half**>(mStorageBufferDevice),
           mInputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
-          mNumStates, mStoreIdDevice, batchSize, batchStride, mCudaStreamExe);
+          mNumStates, mStoreIdDevice, batchSize, batchStride, cudaStreamToUse);
     } else {
       launchRestoreGPUKernel_FP32(
           reinterpret_cast<float**>(mStorageBufferDevice),
           mInputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
-          mNumStates, mStoreIdDevice, batchSize, batchStride, mCudaStreamExe);
+          mNumStates, mStoreIdDevice, batchSize, batchStride, cudaStreamToUse);
     }
   } else {
     if (mStoreStatesAsFp16) {
@@ -1152,6 +1155,7 @@ TrtOnnxModel::report_time(log_stream_t& verbose_ss, log_stream_t& info_ss)
                        mDevicePostTime + mDeviceExeTime;
     verbose_ss << "Total exe time: " << totalTime << std::endl;
     verbose_ss << "Batch size sum: " << mBatchSizeSum << std::endl;
+    verbose_ss << "Number of Inference calls: " << mNumInferCalls << std::endl;
     verbose_ss << std::endl;
     info_ss << "Average Batch Size: "
             << static_cast<double>(mBatchSizeSum) / mNumInferCalls
@@ -1168,10 +1172,14 @@ TrtOnnxModel::report_time(log_stream_t& verbose_ss, log_stream_t& info_ss)
   }
 }
 
+#ifndef NO_TRITON
+#include "response_util.h"
+#endif // NO_TRITON
+
 std::string
 TrtOnnxModel::InferTasks(
     std::stringstream& ss_logs, std::vector<InferenceTask>& inferenceTasks,
-    int batchSize, uint64_t& comp_start_ns, uint64_t& comp_end_ns)
+    int batchSize, void* responses, uint64_t& comp_start_ns, uint64_t& comp_end_ns)
 {
 #ifdef VERBOSE_COUT
   log_stream_t& verbose_ss = std::cout;
@@ -1285,7 +1293,7 @@ TrtOnnxModel::InferTasks(
   }
 
   // restore the states if this is not a start
-  restoreStates(inferenceTasks, batchSize, padded_batch_size);
+  restoreStates(inferenceTasks, batchSize, padded_batch_size, mCudaStreamExe);
 
   if (mUseGpu) {
     RETURN_IF_CUDA_ERROR(cudaStreamSynchronize(mCudaStreamCpy));
@@ -1321,22 +1329,24 @@ TrtOnnxModel::InferTasks(
     }
   }
 
-  // store the states if this is not an end
-  storeStates(inferenceTasks, batchSize, padded_batch_size);
   if (mUseGpu) {
     RETURN_IF_CUDA_ERROR(cudaStreamSynchronize(mCudaStreamCpy));
   }
+
+  // store the states if this is not an end
+  storeStates(inferenceTasks, batchSize, padded_batch_size, mCudaStreamExe);
+
   capture_time(mDevicePostTime, 1, batchSize);
 
   capture_time(mHostPostTime, 0, batchSize);
-  int counter_output = 0;
-  for (const auto& itensor : mOutputTritonTensorInfo) {
+  for (int j = 0; j < batchSize; ++j) {
+    int counter_output = 0;
+    for (const auto& itensor : mOutputTritonTensorInfo) {
 #ifdef VERBOSE_OUTPUT
-    verbose_ss << "Output tensor properties: ";
-    verbose_ss << itensor.type_size << ", " << itensor.sizeX << ", "
-               << itensor.sizeY << std::endl;
+      verbose_ss << "Output tensor properties: ";
+      verbose_ss << itensor.type_size << ", " << itensor.sizeX << ", "
+                << itensor.sizeY << std::endl;
 #endif
-    for (int j = 0; j < batchSize; ++j) {
       for (size_t ix = 0; ix < itensor.sizeX; ++ix) {
         char* pOutputDst =
             reinterpret_cast<char*>(inferenceTasks[j].mOutput[itensor.idx]) +
@@ -1348,11 +1358,16 @@ TrtOnnxModel::InferTasks(
                 itensor.type_size;
         memcpy(pOutputDst, pOutputSrc, itensor.type_size * itensor.sizeY);
       }
+      counter_output++;
     }
-    counter_output++;
+
+#ifndef NO_TRITON
+    if (responses != nullptr) {
+      // Send the responses early
+      triton::backend::stateful::utils::SendSingleResponse(inferenceTasks[j], j, responses);
+    }
+#endif // NO_TRITON
   }
-  capture_time(mHostPostTime, 1, batchSize);
-  report_time(verbose_ss, info_ss);
 
   // cleanup storage if EndSequence received
   for (int i = 0; i < batchSize; ++i) {
@@ -1365,5 +1380,9 @@ TrtOnnxModel::InferTasks(
       mStoreIdMap.erase(corrId);
     }
   }
+
+  capture_time(mHostPostTime, 1, batchSize);
+  report_time(verbose_ss, info_ss);
+  
   return std::string();
 }

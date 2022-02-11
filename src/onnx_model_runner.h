@@ -301,7 +301,7 @@ class TrtOnnxModel {
   // Runs inference for multiple tasks for Triton backend
   std::string InferTasks(
       std::stringstream& ss_logs, std::vector<InferenceTask>& inferenceTasks,
-      int batchSize, uint64_t& comp_start_ns = U64_ZERO,
+      int batchSize, void* responses=nullptr, uint64_t& comp_start_ns = U64_ZERO,
       uint64_t& comp_end_ns = U64_ZERO);
 
   void SetSequenceResetLogging(bool enableLogging)
@@ -309,7 +309,9 @@ class TrtOnnxModel {
     mLogResetSequence = enableLogging;
   }
 
+#ifndef BUILD_GBENCH
  private:
+#endif
   TritonTensorInfo* GetInputTensor(std::string name)
   {
     for (auto& tensor : mInputTritonTensorInfo) {
@@ -351,10 +353,10 @@ class TrtOnnxModel {
 
   void storeStates(
       std::vector<InferenceTask>& inferenceTasks, int batchSize,
-      int batchStride);
+      int batchStride, cudaStream_t& cudaStreamToUse);
   void restoreStates(
       std::vector<InferenceTask>& inferenceTasks, int batchSize,
-      int batchStride);
+      int batchStride, cudaStream_t& cudaStreamToUse);
   std::string prepareDeviceStoreIds(
       log_stream_t& verbose_ss, std::vector<InferenceTask>& inferenceTasks,
       int batchSize);
