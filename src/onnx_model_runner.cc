@@ -192,6 +192,8 @@ TrtOnnxModel::Prepare(
   info_ss << "Maximum connections allowed in the backend: " << mMaxNbConnections
           << std::endl;
   mSequenceTimeoutMicroseconds = seq_timeout_us;
+  // setup storage buffer chunks
+  mNumChunks = 10; // ((max-min)/chunk_size)+1; // TODO: 
   // populate the available indices for the buffers
   for (int i = 0; i < mMaxNbConnections; ++i)
     mStoreAvailableIds.insert(mStoreAvailableIds.end(), i);
@@ -732,20 +734,24 @@ TrtOnnxModel::Prepare(
     verbose_ss << std::endl;
   }
 
+  mStoredStates.reserve(mNumChunks);
+  std::vector<std::unique_ptr<samplesCommon::ManagedBufferInternal>> chunk0;
   for (auto& iTensor : mStateTensors) {
     // allocate the storage space for the storage buffer
     if (maxNbConnections != -1) {
       auto dimsMaxCon = iTensor.mDim;
       dimsMaxCon.d[iTensor.mBatchDim] = maxNbConnections;
-      mStoredStates.emplace_back(
+      chunk0.emplace_back(
           allocate_tensor(dimsMaxCon, mUseGpu, mStoreStatesAsFp16));
-      iTensor.mStoreBuffer = mStoredStates.back()->data(mUseGpu);
+      iTensor.mStoreBuffer.resize(mNumChunks);
+      iTensor.mStoreBuffer[0] = chunk0.back()->data(mUseGpu);
     }
     // find the matching output tensor
     for (auto& jTensor : matchingOutputStates) {
       iTensor.AddOutputNameIfMatch(jTensor.first, jTensor.second);
     }
   }
+  mStoredStates.push_back(std::move(chunk0));
 
   verbose_ss << "State Tensors " << std::endl;
   for (const auto& iTensor : mStateTensors) {
@@ -757,7 +763,8 @@ TrtOnnxModel::Prepare(
     if (maxNbConnections != -1) {
       mNumStates = mStateTensors.size();
       // allocate device buffers for storing/restoring the internal states
-      mStorageBufferHost.resize(mNumStates);
+      mStorageBufferHost.resize(mNumChunks);
+      mStorageBufferHost[0].resize(mNumStates); // only resize chunk0 for now
       mInputStateBufferHost.resize(mNumStates);
       mOutputStateBufferHost.resize(mNumStates);
       mBufferSizeXHost.resize(mNumStates);
@@ -765,7 +772,7 @@ TrtOnnxModel::Prepare(
       mStoreIdHost.resize(mBatchDimMax);
       mCorrIdToDelete.reserve(maxNbConnections);
       for (int i = 0; i < mNumStates; ++i) {
-        mStorageBufferHost[i] = mStateTensors[i].mStoreBuffer;
+        mStorageBufferHost[0][i] = mStateTensors[i].mStoreBuffer[0];
         mInputStateBufferHost[i] =
             reinterpret_cast<float*>(mStateTensors[i].mInputBuffer);
         mOutputStateBufferHost[i] =
@@ -787,9 +794,16 @@ TrtOnnxModel::Prepare(
       }
 
       if (mUseGpu) {
+        mStorageBufferDevicePtrOnHost.resize(mNumChunks, nullptr);
         RETURN_IF_CUDA_ERROR(cudaMalloc(
             reinterpret_cast<void**>(&mStorageBufferDevice),
-            mNumStates * sizeof(void*)));
+            mNumChunks * sizeof(void**)));
+        // allocate pointers for all chunks
+        for (int i=0; i<mNumChunks; ++i) {
+          RETURN_IF_CUDA_ERROR(cudaMalloc(
+              reinterpret_cast<void**>(&mStorageBufferDevicePtrOnHost[i]),
+              mNumStates * sizeof(void*)));
+        }
         RETURN_IF_CUDA_ERROR(cudaMalloc(
             reinterpret_cast<void**>(&mInputStateBufferDevice),
             mNumStates * sizeof(float*)));
@@ -806,8 +820,14 @@ TrtOnnxModel::Prepare(
             reinterpret_cast<void**>(&mStoreIdDevice),
             mBatchDimMax * sizeof(int)));
 
+        // copy the storage buffer pointers
         RETURN_IF_CUDA_ERROR(cudaMemcpy(
-            mStorageBufferDevice, mStorageBufferHost.data(),
+            mStorageBufferDevice, mStorageBufferDevicePtrOnHost.data(),
+            mNumChunks * sizeof(void**), cudaMemcpyHostToDevice));
+        // only copy the first chunk's pointers for now
+        // as we allocate new chunks, we need to copy the pointers as well
+        RETURN_IF_CUDA_ERROR(cudaMemcpy(
+            mStorageBufferDevicePtrOnHost[0], mStorageBufferHost[0].data(),
             mNumStates * sizeof(void*), cudaMemcpyHostToDevice));
         RETURN_IF_CUDA_ERROR(cudaMemcpy(
             mInputStateBufferDevice, mInputStateBufferHost.data(),
@@ -904,17 +924,17 @@ TrtOnnxModel::setBindings(int batchsize, Ort::IoBinding& iobindings)
 }
 
 void launchRestoreGPUKernel_FP32(
-    float** storage, float** states, int* sizesX, int* sizesY, int numStates,
+    float*** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream);
 void launchStoreGPUKernel_FP32(
-    float** storage, float** states, int* sizesX, int* sizesY, int numStates,
+    float*** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream);
 
 void launchRestoreGPUKernel_FP16(
-    __half** storage, float** states, int* sizesX, int* sizesY, int numStates,
+    __half*** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream);
 void launchStoreGPUKernel_FP16(
-    __half** storage, float** states, int* sizesX, int* sizesY, int numStates,
+    __half*** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream);
 
 std::string
@@ -986,7 +1006,7 @@ TrtOnnxModel::storeStates_CPU_FP32(
     std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride)
 {
   for (int i = 0; i < mNumStates; ++i) {
-    float* storageBuffer = static_cast<float*>(mStorageBufferHost[i]);
+    float* storageBuffer = static_cast<float*>(mStorageBufferHost[0][i]); // TODO: remove 0
     size_t sizeX = mBufferSizeXHost[i];
     size_t sizeY = mBufferSizeYHost[i];
     for (int j = 0; j < batchSize; ++j) {
@@ -1010,7 +1030,7 @@ TrtOnnxModel::restoreStates_CPU_FP32(
     std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride)
 {
   for (int i = 0; i < mNumStates; ++i) {
-    float* storageBuffer = static_cast<float*>(mStorageBufferHost[i]);
+    float* storageBuffer = static_cast<float*>(mStorageBufferHost[0][i]); // TODO: remove 0
     size_t sizeX = mBufferSizeXHost[i];
     size_t sizeY = mBufferSizeYHost[i];
     for (int j = 0; j < batchSize; ++j) {
@@ -1033,7 +1053,7 @@ TrtOnnxModel::storeStates_CPU_FP16(
     std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride)
 {
   for (int i = 0; i < mNumStates; ++i) {
-    __half* storageBuffer = static_cast<__half*>(mStorageBufferHost[i]);
+    __half* storageBuffer = static_cast<__half*>(mStorageBufferHost[0][i]); // TODO: remove 0
     size_t sizeX = mBufferSizeXHost[i];
     size_t sizeY = mBufferSizeYHost[i];
     for (int j = 0; j < batchSize; ++j) {
@@ -1058,7 +1078,7 @@ TrtOnnxModel::restoreStates_CPU_FP16(
     std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride)
 {
   for (int i = 0; i < mNumStates; ++i) {
-    __half* storageBuffer = static_cast<__half*>(mStorageBufferHost[i]);
+    __half* storageBuffer = static_cast<__half*>(mStorageBufferHost[0][i]); // TODO: remove 0
     size_t sizeX = mBufferSizeXHost[i];
     size_t sizeY = mBufferSizeYHost[i];
     for (int j = 0; j < batchSize; ++j) {
@@ -1086,12 +1106,12 @@ TrtOnnxModel::storeStates(
   if (mUseGpu) {
     if (mStoreStatesAsFp16) {
       launchStoreGPUKernel_FP16(
-          reinterpret_cast<__half**>(mStorageBufferDevice),
+          reinterpret_cast<__half***>(mStorageBufferDevice),
           mOutputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
           mNumStates, mStoreIdDevice, batchSize, batchStride, cudaStreamToUse);
     } else {
       launchStoreGPUKernel_FP32(
-          reinterpret_cast<float**>(mStorageBufferDevice),
+          reinterpret_cast<float***>(mStorageBufferDevice),
           mOutputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
           mNumStates, mStoreIdDevice, batchSize, batchStride, cudaStreamToUse);
     }
@@ -1112,12 +1132,12 @@ TrtOnnxModel::restoreStates(
   if (mUseGpu) {
     if (mStoreStatesAsFp16) {
       launchRestoreGPUKernel_FP16(
-          reinterpret_cast<__half**>(mStorageBufferDevice),
+          reinterpret_cast<__half***>(mStorageBufferDevice),
           mInputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
           mNumStates, mStoreIdDevice, batchSize, batchStride, cudaStreamToUse);
     } else {
       launchRestoreGPUKernel_FP32(
-          reinterpret_cast<float**>(mStorageBufferDevice),
+          reinterpret_cast<float***>(mStorageBufferDevice),
           mInputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
           mNumStates, mStoreIdDevice, batchSize, batchStride, cudaStreamToUse);
     }

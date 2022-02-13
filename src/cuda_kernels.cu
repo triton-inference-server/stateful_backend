@@ -84,7 +84,7 @@ print_device_vector(int* vec, size_t size)
 
 __global__ void
 storeStates_FP32(
-    float** storage, float** states, int* sizesX, int* sizesY, int* storeids,
+    float*** storage, float** states, int* sizesX, int* sizesY, int* storeids,
     int batchStride)
 {
   int stateId = blockIdx.x;
@@ -94,7 +94,7 @@ storeStates_FP32(
     return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
-  float* pDst = storage[stateId] + storeId * sizeX * sizeY;
+  float* pDst = storage[0][stateId] + storeId * sizeX * sizeY;
   float* pSrc = states[stateId] + batchId * sizeY;
   for (int x = 0; x < sizeX; ++x) {
     for (int i = threadIdx.x; i < sizeY; i += blockDim.x) {
@@ -107,7 +107,7 @@ storeStates_FP32(
 
 __global__ void
 restoreStates_FP32(
-    float** storage, float** states, int* sizesX, int* sizesY, int* storeids,
+    float*** storage, float** states, int* sizesX, int* sizesY, int* storeids,
     int batchStride)
 {
   int stateId = blockIdx.x;
@@ -117,7 +117,7 @@ restoreStates_FP32(
     return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
-  float* pSrc = storage[stateId] + storeId * sizeX * sizeY;
+  float* pSrc = storage[0][stateId] + storeId * sizeX * sizeY;
   float* pDst = states[stateId] + batchId * sizeY;
   for (int x = 0; x < sizeX; ++x) {
     for (int i = threadIdx.x; i < sizeY; i += blockDim.x) {
@@ -130,7 +130,7 @@ restoreStates_FP32(
 
 __global__ void
 storeStates_FP16(
-    __half** storage, float** states, int* sizesX, int* sizesY, int* storeids,
+    __half*** storage, float** states, int* sizesX, int* sizesY, int* storeids,
     int batchStride)
 {
   int stateId = blockIdx.x;
@@ -140,7 +140,7 @@ storeStates_FP16(
     return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
-  __half* pDst = storage[stateId] + storeId * sizeX * sizeY;
+  __half* pDst = storage[0][stateId] + storeId * sizeX * sizeY;
   float* pSrc = states[stateId] + batchId * sizeY;
   for (int x = 0; x < sizeX; ++x) {
     for (int i = threadIdx.x; i < sizeY; i += blockDim.x) {
@@ -153,7 +153,7 @@ storeStates_FP16(
 
 __global__ void
 restoreStates_FP16(
-    __half** storage, float** states, int* sizesX, int* sizesY, int* storeids,
+    __half*** storage, float** states, int* sizesX, int* sizesY, int* storeids,
     int batchStride)
 {
   int stateId = blockIdx.x;
@@ -163,7 +163,7 @@ restoreStates_FP16(
     return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
-  __half* pSrc = storage[stateId] + storeId * sizeX * sizeY;
+  __half* pSrc = storage[0][stateId] + storeId * sizeX * sizeY;
   float* pDst = states[stateId] + batchId * sizeY;
   for (int x = 0; x < sizeX; ++x) {
     for (int i = threadIdx.x; i < sizeY; i += blockDim.x) {
@@ -176,7 +176,7 @@ restoreStates_FP16(
 
 void
 launchRestoreGPUKernel_FP32(
-    float** storage, float** states, int* sizesX, int* sizesY, int numStates,
+    float*** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream)
 {
   dim3 threadsPerBlock(256, 1);
@@ -193,7 +193,7 @@ launchRestoreGPUKernel_FP32(
 
 void
 launchStoreGPUKernel_FP32(
-    float** storage, float** states, int* sizesX, int* sizesY, int numStates,
+    float*** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream)
 {
   dim3 threadsPerBlock(256, 1);
@@ -210,7 +210,7 @@ launchStoreGPUKernel_FP32(
 
 void
 launchRestoreGPUKernel_FP16(
-    __half** storage, float** states, int* sizesX, int* sizesY, int numStates,
+    __half*** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream)
 {
   dim3 threadsPerBlock(256, 1);
@@ -227,7 +227,7 @@ launchRestoreGPUKernel_FP16(
 
 void
 launchStoreGPUKernel_FP16(
-    __half** storage, float** states, int* sizesX, int* sizesY, int numStates,
+    __half*** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream)
 {
   dim3 threadsPerBlock(256, 1);

@@ -267,6 +267,9 @@ class TrtOnnxModel {
       CHECK(cudaStreamDestroy(mCudaStreamExe));
       CHECK(cudaStreamDestroy(mCudaStreamCpy));
       if (mNumStates != -1) {
+        for (size_t i=0; i<mStorageBufferDevicePtrOnHost.size(); ++i) {
+          CHECK(cudaFree(mStorageBufferDevicePtrOnHost[i]));
+        }
         CHECK(cudaFree(mStorageBufferDevice));
         CHECK(cudaFree(mInputStateBufferDevice));
         CHECK(cudaFree(mOutputStateBufferDevice));
@@ -379,8 +382,9 @@ class TrtOnnxModel {
       mOutputs[MAX_IO_NUM];  //!< Host and device buffers for the outputs
   std::vector<std::unique_ptr<samplesCommon::ManagedBufferInternal>>
       mStates{};  //!< Host and device buffers for the internal states
-  std::vector<std::unique_ptr<samplesCommon::ManagedBufferInternal>>
-      mStoredStates{};  //!< Host and device buffers for the internal states
+  std::vector<std::vector<
+              std::unique_ptr<samplesCommon::ManagedBufferInternal>>>
+              mStoredStates{};  //!< Host and device buffers for the internal states
 
   int mMaxNbConnections{-1};
   std::vector<int64_t> mPreferredBatchSizes;
@@ -400,14 +404,16 @@ class TrtOnnxModel {
   cudaStream_t mCudaStreamExe;
   cudaStream_t mCudaStreamCpy;
 
-  void** mStorageBufferDevice{nullptr};  // either float or __half
+  int mNumChunks{1}; // number of buffer chunks
+  std::vector<void**> mStorageBufferDevicePtrOnHost;  // dev ptrs to chunks
+  void*** mStorageBufferDevice;  // either float or __half
   float** mInputStateBufferDevice{nullptr};
   float** mOutputStateBufferDevice{nullptr};
   int* mBufferSizeXDevice{nullptr};
   int* mBufferSizeYDevice{nullptr};
   int* mStoreIdDevice{nullptr};
 
-  std::vector<void*> mStorageBufferHost;  // either float or __half
+  std::vector<std::vector<void*>> mStorageBufferHost;  // either float or __half
   std::vector<float*> mInputStateBufferHost;
   std::vector<float*> mOutputStateBufferHost;
   std::vector<int> mBufferSizeXHost;
@@ -462,7 +468,7 @@ class TrtOnnxModel {
     std::string mOutputName;
     void* mInputBuffer{nullptr};
     void* mOutputBuffer{nullptr};
-    void* mStoreBuffer{nullptr};
+    std::vector<void*> mStoreBuffer;
     nvinfer1::Dims mDim;
     enum nvinfer1::DataType mType;
     int mBatchDim{-1};
@@ -593,7 +599,9 @@ class TrtOnnxModel {
       os << "I/O Tensors: " << mInputName << " / " << mOutputName;
       os << "Dims: " << mDim;
       os << "Buffers: " << mInputBuffer << ", " << mOutputBuffer << ", ";
-      os << mStoreBuffer;
+      for (auto buffer : mStoreBuffer) {
+        os << buffer;
+      }
     }
 
    private:
