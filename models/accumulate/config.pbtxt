@@ -21,12 +21,12 @@
 
 name: "accumulate"
 backend: "stateful"
-max_batch_size: 64
+max_batch_size: 16
 sequence_batching {
   max_sequence_idle_microseconds: 100000000
   oldest {
     max_candidate_sequences: 1280
-    preferred_batch_size: [ 64 ]
+    #preferred_batch_size: [ 64 ]
     max_queue_delay_microseconds: 2000
   }
  
@@ -54,8 +54,8 @@ sequence_batching {
       control [
         {
           kind: CONTROL_SEQUENCE_CORRID
-          data_type: TYPE_STRING
-          # data_type: TYPE_UINT64
+          # data_type: TYPE_STRING
+          data_type: TYPE_UINT64
         }
       ]
     }
@@ -87,6 +87,22 @@ parameters [
   {
     key: "state_pairs"
     value: { string_value: "<<<Accumulate_In, Accumulate_Out>>>" }
+  },
+  {
+    key: "first_chunk_size"
+    value: { string_value: "512" }
+  },
+  {
+    key: "chunk_size"
+    value: { string_value: "100" }
+  },
+  {
+    key: "min_free_threshold"
+    value: { string_value: "32" }
+  },
+  {
+    key: "error_inject_rate"
+    value: { string_value: "15" }
   },
   {
     key: "ort_ep"
@@ -147,5 +163,7 @@ instance_group [
     count: 2
     kind: KIND_GPU
     gpus: [0]
+    #count: 1
+    #kind: KIND_CPU
   }
 ]

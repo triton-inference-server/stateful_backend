@@ -461,10 +461,7 @@ ModelState::InitModelState()
     IGNORE_ERROR(error_inject_rate.MemberAsString(
         "string_value", &str_error_inject_rate));
   }
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("Error Injection Rate = ") + str_error_inject_rate).c_str());
-  error_inject_rate_ = 0;
+  error_inject_rate_ = 20; // 20% of requests will get random error response
   if (!str_error_inject_rate.empty()) {
     try {
       int64_t r = static_cast<int64_t>(std::stoll(str_error_inject_rate));
@@ -482,6 +479,12 @@ ModelState::InitModelState()
           TRITONSERVER_LOG_WARN, "Invalid value in 'error_inject_rate'.");
     }
   }
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("Error Injection Rate = ") + std::to_string(error_inject_rate_)).c_str());
+  const int rseed = rand()%100;
+  std::cout << "Error Injection Random Seed = " << rseed << std::endl;
+  srand(rseed);
 #endif  // DEBUG_ERROR_INJECT
 
   // Initialize  environment...one environment per process
@@ -1059,7 +1062,9 @@ TRITONBACKEND_ModelInstanceExecute(
     }
 #ifdef DEBUG_ERROR_INJECT
     // inject error before calling InferTasks()
-    if ((rand() % 100) < model_state->error_inject_rate_) {
+    std::cerr << "Injecting error for # " << request_id << std::endl;
+    // TODO: don't send error for last segment until Triton fixes bug
+    if (input_end == 0 && (rand() % 100) < model_state->error_inject_rate_) {
       instance_state->inference_tasks_[r].err_msg = "RANDOM ERROR";
     }
 #endif  // DEBUG_ERROR_INJECT

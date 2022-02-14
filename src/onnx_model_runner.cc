@@ -961,6 +961,7 @@ TrtOnnxModel::prepareDeviceStoreIds(
       mCorrIdToDelete.push_back(item.first);
     }
   }
+  // NOTE: BUG!!! Got a request that just timed out, what happens??????
   for (auto corrId : mCorrIdToDelete) {
     verbose_ss << "Timeout ocurred for CorrID : " << corrId << std::endl;
     const int chunk_id = std::get<0>(mStoreIdMap[corrId]);
@@ -971,6 +972,11 @@ TrtOnnxModel::prepareDeviceStoreIds(
   mCorrIdToDelete.clear();  // resets size but not capacity
 
   for (int i = 0; i < batchSize; ++i) {
+    if (!inferenceTasks[i].err_msg.empty()) {
+      mStoreIdHost[i*2] = -1;  // signal for not storing/restoring states
+      mStoreIdHost[i*2+1] = -1;  // signal for not storing/restoring states
+      continue;
+    }
     auto corrId = inferenceTasks[i].mCorrId;
     auto foundId = mStoreIdMap.find(corrId);
     if (foundId == mStoreIdMap.end()) {
