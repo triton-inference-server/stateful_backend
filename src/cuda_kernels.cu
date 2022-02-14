@@ -89,12 +89,13 @@ storeStates_FP32(
 {
   int stateId = blockIdx.x;
   int batchId = blockIdx.y;
-  int storeId = storeids[batchId];
-  if (storeId < 0)
+  int chunkId = storeids[batchId*2];
+  int storeId = storeids[batchId*2+1];
+  if (chunkId < 0 || storeId < 0)
     return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
-  float* pDst = storage[0][stateId] + storeId * sizeX * sizeY;
+  float* pDst = storage[chunkId][stateId] + storeId * sizeX * sizeY;
   float* pSrc = states[stateId] + batchId * sizeY;
   for (int x = 0; x < sizeX; ++x) {
     for (int i = threadIdx.x; i < sizeY; i += blockDim.x) {
@@ -112,12 +113,13 @@ restoreStates_FP32(
 {
   int stateId = blockIdx.x;
   int batchId = blockIdx.y;
-  int storeId = storeids[batchId];
-  if (storeId < 0)
+  int chunkId = storeids[batchId*2];
+  int storeId = storeids[batchId*2+1];
+  if (chunkId < 0 || storeId < 0)
     return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
-  float* pSrc = storage[0][stateId] + storeId * sizeX * sizeY;
+  float* pSrc = storage[chunkId][stateId] + storeId * sizeX * sizeY;
   float* pDst = states[stateId] + batchId * sizeY;
   for (int x = 0; x < sizeX; ++x) {
     for (int i = threadIdx.x; i < sizeY; i += blockDim.x) {
@@ -135,12 +137,13 @@ storeStates_FP16(
 {
   int stateId = blockIdx.x;
   int batchId = blockIdx.y;
-  int storeId = storeids[batchId];
-  if (storeId < 0)
+  int chunkId = storeids[batchId*2];
+  int storeId = storeids[batchId*2+1];
+  if (chunkId < 0 || storeId < 0)
     return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
-  __half* pDst = storage[0][stateId] + storeId * sizeX * sizeY;
+  __half* pDst = storage[chunkId][stateId] + storeId * sizeX * sizeY;
   float* pSrc = states[stateId] + batchId * sizeY;
   for (int x = 0; x < sizeX; ++x) {
     for (int i = threadIdx.x; i < sizeY; i += blockDim.x) {
@@ -158,12 +161,13 @@ restoreStates_FP16(
 {
   int stateId = blockIdx.x;
   int batchId = blockIdx.y;
-  int storeId = storeids[batchId];
-  if (storeId < 0)
+  int chunkId = storeids[batchId*2];
+  int storeId = storeids[batchId*2+1];
+  if (chunkId < 0 || storeId < 0)
     return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
-  __half* pSrc = storage[0][stateId] + storeId * sizeX * sizeY;
+  __half* pSrc = storage[chunkId][stateId] + storeId * sizeX * sizeY;
   float* pDst = states[stateId] + batchId * sizeY;
   for (int x = 0; x < sizeX; ++x) {
     for (int i = threadIdx.x; i < sizeY; i += blockDim.x) {
@@ -185,7 +189,7 @@ launchRestoreGPUKernel_FP32(
       storage, states, sizesX, sizesY, storeids, batchStride);
 #ifdef VERBOSE_OUTPUT
   std::cout << "Restoring the instances:" << std::endl;
-  print_device_vector(storeids, batchSize);
+  print_device_vector(storeids, batchSize*2);
   print_device_vector(sizes, numStates);
   print_device_vectors(states, numStates, 2);
 #endif
@@ -202,7 +206,7 @@ launchStoreGPUKernel_FP32(
       storage, states, sizesX, sizesY, storeids, batchStride);
 #ifdef VERBOSE_OUTPUT
   std::cout << "Storing the instances:" << std::endl;
-  print_device_vector(storeids, batchSize);
+  print_device_vector(storeids, batchSize*2);
   print_device_vector(sizes, numStates);
   print_device_vectors(states, numStates, 2);
 #endif
@@ -219,7 +223,7 @@ launchRestoreGPUKernel_FP16(
       storage, states, sizesX, sizesY, storeids, batchStride);
 #ifdef VERBOSE_OUTPUT
   std::cout << "Restoring the instances:" << std::endl;
-  print_device_vector(storeids, batchSize);
+  print_device_vector(storeids, batchSize*2);
   print_device_vector(sizes, numStates);
   print_device_vectors(states, numStates, 2);
 #endif
@@ -236,7 +240,7 @@ launchStoreGPUKernel_FP16(
       storage, states, sizesX, sizesY, storeids, batchStride);
 #ifdef VERBOSE_OUTPUT
   std::cout << "Storing the instances:" << std::endl;
-  print_device_vector(storeids, batchSize);
+  print_device_vector(storeids, batchSize*2);
   print_device_vector(sizes, numStates);
   print_device_vectors(states, numStates, 2);
 #endif

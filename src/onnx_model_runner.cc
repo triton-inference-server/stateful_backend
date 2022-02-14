@@ -194,9 +194,10 @@ TrtOnnxModel::Prepare(
   mSequenceTimeoutMicroseconds = seq_timeout_us;
   // setup storage buffer chunks
   mNumChunks = 10; // ((max-min)/chunk_size)+1; // TODO: 
+  mStoreAvailableIds.resize(mNumChunks);
   // populate the available indices for the buffers
   for (int i = 0; i < mMaxNbConnections; ++i)
-    mStoreAvailableIds.insert(mStoreAvailableIds.end(), i);
+    mStoreAvailableIds[0].insert(mStoreAvailableIds[0].end(), i);
   mInputTritonTensorInfo = input_tensors;
   mOutputTritonTensorInfo = output_tensors;
   int64_t min_pref_batch = pref_batch_sizes[0];
@@ -769,7 +770,7 @@ TrtOnnxModel::Prepare(
       mOutputStateBufferHost.resize(mNumStates);
       mBufferSizeXHost.resize(mNumStates);
       mBufferSizeYHost.resize(mNumStates);
-      mStoreIdHost.resize(mBatchDimMax);
+      mStoreIdHost.resize(mBatchDimMax*2);
       mCorrIdToDelete.reserve(maxNbConnections);
       for (int i = 0; i < mNumStates; ++i) {
         mStorageBufferHost[0][i] = mStateTensors[i].mStoreBuffer[0];
@@ -818,7 +819,7 @@ TrtOnnxModel::Prepare(
             mNumStates * sizeof(int)));
         RETURN_IF_CUDA_ERROR(cudaMalloc(
             reinterpret_cast<void**>(&mStoreIdDevice),
-            mBatchDimMax * sizeof(int)));
+            mBatchDimMax * 2 * sizeof(int)));
 
         // copy the storage buffer pointers
         RETURN_IF_CUDA_ERROR(cudaMemcpy(
@@ -953,7 +954,7 @@ TrtOnnxModel::prepareDeviceStoreIds(
   time_point_t now = NOW();
   // check the IDs in use for timeout
   for (auto item : mStoreIdMap) {
-    int64_t time_lapsed = DURATION_MICRO(now - item.second.second).count();
+    int64_t time_lapsed = DURATION_MICRO(now - std::get<2>(item.second)).count();
     if (time_lapsed > mSequenceTimeoutMicroseconds) {
       // timeout ocurred since this sequence ID was used
       // remove its allocation of storage buffer
@@ -962,41 +963,55 @@ TrtOnnxModel::prepareDeviceStoreIds(
   }
   for (auto corrId : mCorrIdToDelete) {
     verbose_ss << "Timeout ocurred for CorrID : " << corrId << std::endl;
-    mStoreAvailableIds.insert(mStoreIdMap[corrId].first);
+    const int chunk_id = std::get<0>(mStoreIdMap[corrId]);
+    const int buffer_idx = std::get<1>(mStoreIdMap[corrId]);
+    mStoreAvailableIds[chunk_id].insert(buffer_idx);
     mStoreIdMap.erase(corrId);
   }
   mCorrIdToDelete.clear();  // resets size but not capacity
 
   for (int i = 0; i < batchSize; ++i) {
     auto corrId = inferenceTasks[i].mCorrId;
-    auto findId = mStoreIdMap.find(corrId);
-    if (findId == mStoreIdMap.end()) {
-      if (mStoreAvailableIds.empty()) {
+    auto foundId = mStoreIdMap.find(corrId);
+    if (foundId == mStoreIdMap.end()) {
+      size_t store_id = 0;
+      for (; store_id < mStoreAvailableIds.size(); ++store_id) {
+        if (!mStoreAvailableIds[store_id].empty()) {
+          break;
+        }
+      }
+      if (store_id >= mStoreAvailableIds.size()) {
+        // all chunks are full, which will happen when we reached max
         inferenceTasks[i].err_msg = "Too many simultaneous connections";
-        mStoreIdHost[i] = -1;  // no empty slots
+        mStoreIdHost[i*2] = -1;  // no empty slots
+        mStoreIdHost[i*2+1] = -1;  // no empty slots
         continue;
       }
       const int idx_to_use =
-          *mStoreAvailableIds.begin();  // get the first available
-      mStoreAvailableIds.erase(mStoreAvailableIds.begin());  // then remove it
-      mStoreIdMap[corrId] = make_pair(idx_to_use, now);
-      mStoreIdHost[i] = idx_to_use;
+          *mStoreAvailableIds[store_id].begin();  // get the first available
+      mStoreAvailableIds[store_id].erase(mStoreAvailableIds[store_id].begin());  // then remove it
+      mStoreIdMap[corrId] = make_tuple(store_id, idx_to_use, now);
+      mStoreIdHost[i*2] = store_id;
+      mStoreIdHost[i*2+1] = idx_to_use;
 #ifdef VERBOSE_STORAGE_ACTIVITY
-      verbose_ss << "Assigning new index for storage: " << idx_to_use
+      verbose_ss << "Assigning new index for storage: chunk=" 
+                 << mStoreIdHost[i*2] << " idx=" << mStoreIdHost[i*2+1]
                  << std::endl;
 #endif
     } else {
-      findId->second.second = now;  // update timestamp
-      mStoreIdHost[i] = findId->second.first;
+      std::get<2>(foundId->second) = now;  // update timestamp
+      mStoreIdHost[i*2] = std::get<0>(foundId->second);
+      mStoreIdHost[i*2+1] = std::get<1>(foundId->second);
 #ifdef VERBOSE_STORAGE_ACTIVITY
-      verbose_ss << "Found old index for storage: " << mStoreIdHost[i]
+      verbose_ss << "Found old index for storage: chunk=" 
+                 << mStoreIdHost[i*2] << " idx=" << mStoreIdHost[i*2+1]
                  << std::endl;
 #endif
     }
   }
   if (mUseGpu)
     RETURN_IF_CUDA_ERROR(cudaMemcpyAsync(
-        mStoreIdDevice, mStoreIdHost.data(), batchSize * sizeof(int),
+        mStoreIdDevice, mStoreIdHost.data(), batchSize * 2 * sizeof(int),
         cudaMemcpyHostToDevice, mCudaStreamExe));
   return std::string();
 }
@@ -1006,17 +1021,19 @@ TrtOnnxModel::storeStates_CPU_FP32(
     std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride)
 {
   for (int i = 0; i < mNumStates; ++i) {
-    float* storageBuffer = static_cast<float*>(mStorageBufferHost[0][i]); // TODO: remove 0
     size_t sizeX = mBufferSizeXHost[i];
     size_t sizeY = mBufferSizeYHost[i];
     for (int j = 0; j < batchSize; ++j) {
       if (!inferenceTasks[j].err_msg.empty())
         continue;  // don't store if error
-      if (mStoreIdHost[j] < 0)
+      const int chunk_id = mStoreIdHost[j*2];
+      const int buffer_idx = mStoreIdHost[j*2+1];
+      if (chunk_id < 0 || buffer_idx < 0)
         continue;  // no empty slots
+      float* storageBuffer = static_cast<float*>(mStorageBufferHost[chunk_id][i]);
       for (size_t ix = 0; ix < sizeX; ++ix) {
         for (size_t iy = 0; iy < sizeY; ++iy) {
-          storageBuffer[mStoreIdHost[j] * sizeX * sizeY + ix * sizeY + iy] =
+          storageBuffer[buffer_idx * sizeX * sizeY + ix * sizeY + iy] =
               mOutputStateBufferHost[i]
                                     [ix * batchStride * sizeY + j * sizeY + iy];
         }
@@ -1030,18 +1047,20 @@ TrtOnnxModel::restoreStates_CPU_FP32(
     std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride)
 {
   for (int i = 0; i < mNumStates; ++i) {
-    float* storageBuffer = static_cast<float*>(mStorageBufferHost[0][i]); // TODO: remove 0
     size_t sizeX = mBufferSizeXHost[i];
     size_t sizeY = mBufferSizeYHost[i];
     for (int j = 0; j < batchSize; ++j) {
       if (!inferenceTasks[j].err_msg.empty())
         continue;  // don't restore if error
-      if (mStoreIdHost[j] < 0)
+      const int chunk_id = mStoreIdHost[j*2];
+      const int buffer_idx = mStoreIdHost[j*2+1];
+      if (chunk_id < 0 || buffer_idx < 0)
         continue;  // no empty slots
+      float* storageBuffer = static_cast<float*>(mStorageBufferHost[chunk_id][i]);
       for (size_t ix = 0; ix < sizeX; ++ix) {
         for (size_t iy = 0; iy < sizeY; ++iy) {
           mInputStateBufferHost[i][ix * batchStride * sizeY + j * sizeY + iy] =
-              storageBuffer[mStoreIdHost[j] * sizeX * sizeY + ix * sizeY + iy];
+              storageBuffer[buffer_idx * sizeX * sizeY + ix * sizeY + iy];
         }
       }
     }
@@ -1053,17 +1072,19 @@ TrtOnnxModel::storeStates_CPU_FP16(
     std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride)
 {
   for (int i = 0; i < mNumStates; ++i) {
-    __half* storageBuffer = static_cast<__half*>(mStorageBufferHost[0][i]); // TODO: remove 0
     size_t sizeX = mBufferSizeXHost[i];
     size_t sizeY = mBufferSizeYHost[i];
     for (int j = 0; j < batchSize; ++j) {
       if (!inferenceTasks[j].err_msg.empty())
         continue;  // don't store if error
-      if (mStoreIdHost[j] < 0)
+      const int chunk_id = mStoreIdHost[j*2];
+      const int buffer_idx = mStoreIdHost[j*2+1];
+      if (chunk_id < 0 || buffer_idx < 0)
         continue;  // no empty slots
+      __half* storageBuffer = static_cast<__half*>(mStorageBufferHost[chunk_id][i]);
       for (size_t ix = 0; ix < sizeX; ++ix) {
         for (size_t iy = 0; iy < sizeY; ++iy) {
-          storageBuffer[mStoreIdHost[j] * sizeX * sizeY + ix * sizeY + iy] =
+          storageBuffer[buffer_idx * sizeX * sizeY + ix * sizeY + iy] =
               __float2half(mOutputStateBufferHost[i]
                                                  [ix * batchStride * sizeY +
                                                   j * sizeY + iy]);
@@ -1078,20 +1099,22 @@ TrtOnnxModel::restoreStates_CPU_FP16(
     std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride)
 {
   for (int i = 0; i < mNumStates; ++i) {
-    __half* storageBuffer = static_cast<__half*>(mStorageBufferHost[0][i]); // TODO: remove 0
     size_t sizeX = mBufferSizeXHost[i];
     size_t sizeY = mBufferSizeYHost[i];
     for (int j = 0; j < batchSize; ++j) {
       if (!inferenceTasks[j].err_msg.empty())
         continue;  // don't restore if error
-      if (mStoreIdHost[j] < 0)
+      const int chunk_id = mStoreIdHost[j*2];
+      const int buffer_idx = mStoreIdHost[j*2+1];
+      if (chunk_id < 0 || buffer_idx < 0)
         continue;  // no empty slots
+      __half* storageBuffer = static_cast<__half*>(mStorageBufferHost[chunk_id][i]);
       for (size_t ix = 0; ix < sizeX; ++ix) {
         for (size_t iy = 0; iy < sizeY; ++iy) {
           mInputStateBufferHost[i][ix * batchStride * sizeY + j * sizeY + iy] =
               __half2float(
                   storageBuffer
-                      [mStoreIdHost[j] * sizeX * sizeY + ix * sizeY + iy]);
+                      [buffer_idx * sizeX * sizeY + ix * sizeY + iy]);
         }
       }
     }
@@ -1396,7 +1419,9 @@ TrtOnnxModel::InferTasks(
       // release the storage buffer
       auto corrId = inferenceTasks[i].mCorrId;
       verbose_ss << "EndSequence received for CorrID : " << corrId << std::endl;
-      mStoreAvailableIds.insert(mStoreIdMap[corrId].first);
+      const int chunk_id = std::get<0>(mStoreIdMap[corrId]);
+      const int buffer_idx = std::get<1>(mStoreIdMap[corrId]);
+      mStoreAvailableIds[chunk_id].insert(buffer_idx);
       mStoreIdMap.erase(corrId);
     }
   }

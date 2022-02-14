@@ -364,8 +364,8 @@ class TrtOnnxModel {
       log_stream_t& verbose_ss, std::vector<InferenceTask>& inferenceTasks,
       int batchSize);
 
-  std::unordered_map<std::string, std::pair<int, time_point_t>> mStoreIdMap;
-  std::set<int> mStoreAvailableIds;
+  std::unordered_map<std::string, std::tuple<int,int,time_point_t>> mStoreIdMap;
+  std::vector<std::set<int>> mStoreAvailableIds;
   std::vector<std::string> mCorrIdToDelete;
 
   // Engines used for inference. The first is used for resizing inputs, the
