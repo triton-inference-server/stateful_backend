@@ -28,6 +28,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <unordered_set>
 #include <sstream>
 #include <unordered_map>
 #include "buffers.h"
@@ -366,7 +367,7 @@ class TrtOnnxModel {
 
   std::unordered_map<std::string, std::tuple<int,int,time_point_t>> mStoreIdMap;
   std::vector<std::set<int>> mStoreAvailableIds;
-  std::vector<std::string> mCorrIdToDelete;
+  std::unordered_set<std::string> mCorrIdToDelete;
 
   // Engines used for inference. The first is used for resizing inputs, the
   // second for prediction. SampleUniquePtr<nvinfer1::ICudaEngine>

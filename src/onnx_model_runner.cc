@@ -958,10 +958,18 @@ TrtOnnxModel::prepareDeviceStoreIds(
     if (time_lapsed > mSequenceTimeoutMicroseconds) {
       // timeout ocurred since this sequence ID was used
       // remove its allocation of storage buffer
-      mCorrIdToDelete.push_back(item.first);
+      mCorrIdToDelete.insert(item.first);
     }
   }
-  // NOTE: BUG!!! Got a request that just timed out, what happens??????
+  // NOTE: if a sequence is in the current batch but just got timed-out above,
+  //       we cannot delete it since Triton still sees it as active.
+  for (int i = 0; i < batchSize; ++i) {
+    auto found = mCorrIdToDelete.find(inferenceTasks[i].mCorrId);
+    if (found != mCorrIdToDelete.end()) {
+      mCorrIdToDelete.erase(inferenceTasks[i].mCorrId);
+    }
+  }
+  // We must delete the timed-out sequences first to make room for new sequences
   for (auto corrId : mCorrIdToDelete) {
     verbose_ss << "Timeout ocurred for CorrID : " << corrId << std::endl;
     const int chunk_id = std::get<0>(mStoreIdMap[corrId]);
