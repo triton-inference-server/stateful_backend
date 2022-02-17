@@ -253,6 +253,24 @@ class InferenceTask {
   std::string err_msg;  // will be used to track individual error
 };
 
+// all the params for lazy allocation
+class BufferConfig {
+public:
+  int64_t max_connections;
+  int64_t initial_buffer_size;
+  int64_t consequent_buffer_size;
+  int64_t alloc_threshold;
+  int64_t dealloc_threshold;
+
+  std::string to_string() {
+    std::stringstream ss;
+    ss << "[" << initial_buffer_size << ",";
+    ss << max_connections << "," << consequent_buffer_size << "]";
+    ss << " [" << alloc_threshold << "," << dealloc_threshold << "]";
+    return ss.str();
+  }
+};
+
 // The TrtOnnxModel class implements loading and running a stateful ONNX model.
 class TrtOnnxModel {
  public:
@@ -292,7 +310,8 @@ class TrtOnnxModel {
   // allocating buffers.
   std::string Prepare(
       std::stringstream& ss_logs, std::shared_ptr<Ort::Env> ort_env,
-      std::string onnx_file_name, std::string state_pairs, int maxNbConnections,
+      std::string onnx_file_name, std::string state_pairs,
+      const BufferConfig& buffer_config,
       int gpuId, std::vector<int64_t>& pref_batch_sizes,
       const std::vector<TritonTensorInfo>& input_tensors,
       const std::vector<TritonTensorInfo>& output_tensors,
@@ -305,8 +324,8 @@ class TrtOnnxModel {
   // Runs inference for multiple tasks for Triton backend
   std::string InferTasks(
       std::stringstream& ss_logs, std::vector<InferenceTask>& inferenceTasks,
-      int batchSize, void* responses=nullptr, uint64_t& comp_start_ns = U64_ZERO,
-      uint64_t& comp_end_ns = U64_ZERO);
+      int batchSize, void* responses=nullptr, uint64_t& comp_start_ns=U64_ZERO,
+      uint64_t& comp_end_ns=U64_ZERO);
 
   void SetSequenceResetLogging(bool enableLogging)
   {
@@ -369,10 +388,6 @@ class TrtOnnxModel {
   std::vector<std::set<int>> mStoreAvailableIds;
   std::unordered_set<std::string> mCorrIdToDelete;
 
-  // Engines used for inference. The first is used for resizing inputs, the
-  // second for prediction. SampleUniquePtr<nvinfer1::ICudaEngine>
-  // mEngine{nullptr}; SampleUniquePtr<nvinfer1::IExecutionContext>
-  // mContext{nullptr};
 
   samplesCommon::ManagedBufferInternal
       mInputs[MAX_IO_NUM];  //!< Host and device buffers for the input.
@@ -384,10 +399,10 @@ class TrtOnnxModel {
   std::vector<std::unique_ptr<samplesCommon::ManagedBufferInternal>>
       mStates{};  //!< Host and device buffers for the internal states
   std::vector<std::vector<
-              std::unique_ptr<samplesCommon::ManagedBufferInternal>>>
-              mStoredStates{};  //!< Host and device buffers for the internal states
+      std::unique_ptr<samplesCommon::ManagedBufferInternal>>>
+      mStoredStates{};  //!< Host and device buffers for the internal states
 
-  int mMaxNbConnections{-1};
+  BufferConfig mBufferConfig;
   std::vector<int64_t> mPreferredBatchSizes;
   int64_t mSequenceTimeoutMicroseconds;
 
@@ -405,7 +420,8 @@ class TrtOnnxModel {
   cudaStream_t mCudaStreamExe;
   cudaStream_t mCudaStreamCpy;
 
-  int mNumChunks{1}; // number of buffer chunks
+  int mNumChunks{1}; // current number of buffer chunks
+  int mMaxChunks{1}; // maximum number of buffer chunks
   std::vector<void**> mStorageBufferDevicePtrOnHost;  // dev ptrs to chunks
   void*** mStorageBufferDevice;  // either float or __half
   float** mInputStateBufferDevice{nullptr};
@@ -428,6 +444,9 @@ class TrtOnnxModel {
 
   void capture_time(double& time, int start_end, int bathsize);
   void report_time(log_stream_t& verbose_ss, log_stream_t& info_ss);
+  std::string AllocateNewChunk(log_stream_t&, log_stream_t&);
+  std::string DeAllocateChunk(log_stream_t&, log_stream_t&);
+  std::string TryAndDeAllocateChunk(log_stream_t&, log_stream_t&);
   double mHostPreTime{0.}, mHostPostTime{0.};
   double mDevicePreTime{0.}, mDevicePostTime{0.};
   double mDeviceExeTime{0.};

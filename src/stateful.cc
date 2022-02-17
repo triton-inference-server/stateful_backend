@@ -44,6 +44,12 @@
 #include "stateful.h"
 #include "response_util.h"
 
+#if (TRITONBACKEND_API_VERSION_MAJOR > 1) || \
+    ((TRITONBACKEND_API_VERSION_MAJOR == 1) && \
+     (TRITONBACKEND_API_VERSION_MINOR >= 6))
+  #define TRITON_SUPPORTS_STRING_CORRID
+#endif
+
 namespace triton { namespace backend { namespace stateful {
 
 //
@@ -106,6 +112,7 @@ class ModelState : public BackendModel {
  public:
   int64_t max_batch_size_;
   int64_t max_sequence_idle_microseconds_;
+  BufferConfig buffer_config_;
   int64_t max_candidate_sequences_;
   std::vector<int64_t> pref_batch_sizes_;
   bool is_corrId_string;
@@ -170,6 +177,19 @@ ModelState::ValidateModelConfig()
   return nullptr;  // success
 }
 
+inline TRITONSERVER_Error*
+GetInt64Parameter(
+  common::TritonJson::Value& parameters, std::string name, int64_t& i64_conf)
+{
+  common::TritonJson::Value buffer_config;
+  std::string buffer_config_str;
+  RETURN_IF_ERROR(
+    parameters.MemberAsObject(name.c_str(), &buffer_config));
+  RETURN_IF_ERROR(
+    buffer_config.MemberAsString("string_value", &buffer_config_str));
+  i64_conf = static_cast<int64_t>(std::stol(buffer_config_str));
+  return nullptr;
+}
 
 // Initialize the model specific variables shared by all instances
 TRITONSERVER_Error*
@@ -233,7 +253,12 @@ ModelState::InitModelState()
   // set default values for configurable parameters
   max_batch_size_ = 64;
   max_sequence_idle_microseconds_ = 100000000;
-  max_candidate_sequences_ = 1280;
+  buffer_config_.max_connections = 1280;
+  buffer_config_.initial_buffer_size = 400;
+  buffer_config_.consequent_buffer_size = 100;
+  buffer_config_.alloc_threshold = 32;
+  buffer_config_.dealloc_threshold = 150;
+  max_candidate_sequences_ = buffer_config_.max_connections;
   is_corrId_string = false;
   ort_ep_name_ = "trt";
   compute_precision_name_ = "fp16";
@@ -291,9 +316,11 @@ ModelState::InitModelState()
       LOG_MESSAGE(
           TRITONSERVER_LOG_INFO,
           (std::string("CORRID Data Type = ") + control_data_type).c_str());
+#ifdef TRITON_SUPPORTS_STRING_CORRID
       if (control_data_type.compare("TYPE_STRING") == 0) {
         is_corrId_string = true;
       }
+#endif
     }
   }
   IGNORE_ERROR(sequence_batching.MemberAsInt(
@@ -338,6 +365,19 @@ ModelState::InitModelState()
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
       (std::string("onnx file name = ") + onnx_file_name_).c_str());
+
+  buffer_config_.max_connections = max_candidate_sequences_;
+  RETURN_IF_ERROR(GetInt64Parameter(parameters, "initial_buffer_size",
+      buffer_config_.initial_buffer_size));
+  RETURN_IF_ERROR(GetInt64Parameter(parameters, "consequent_buffer_size",
+      buffer_config_.consequent_buffer_size));
+  RETURN_IF_ERROR(GetInt64Parameter(parameters, "buffer_alloc_threshold",
+      buffer_config_.alloc_threshold));
+  RETURN_IF_ERROR(GetInt64Parameter(parameters, "buffer_dealloc_threshold",
+      buffer_config_.dealloc_threshold));
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("Buffer Config = ") + buffer_config_.to_string()).c_str());
 
   common::TritonJson::Value ort_ep;
   CHECK_IF_ERROR(parameters.MemberAsObject("ort_ep", &ort_ep), parse_succeeded);
@@ -481,7 +521,8 @@ ModelState::InitModelState()
   }
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
-      (std::string("Error Injection Rate = ") + std::to_string(error_inject_rate_)).c_str());
+      (std::string("Error Injection Rate = ") +
+       std::to_string(error_inject_rate_)).c_str());
   const int rseed = rand()%100;
   std::cout << "Error Injection Random Seed = " << rseed << std::endl;
   srand(rseed);
@@ -767,10 +808,15 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   catch (...) {
     LOG_MESSAGE(
         TRITONSERVER_LOG_WARN,
-        "Invalid value in 'metric_logging_frequency_seconds'.");
+        "Invalid value in 'max_candidate_sequence_use_ratio'.");
   }
-  int64_t max_connection = static_cast<int64_t>(
-      model_state->max_candidate_sequences_ * max_connection_use_ratio);
+  model_state->buffer_config_.max_connections = static_cast<int64_t>(
+      model_state->buffer_config_.max_connections * max_connection_use_ratio);
+
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("Max connectionss in the backend: ") +
+       std::to_string(model_state->buffer_config_.max_connections)).c_str());
 
   bool pad_to_max_batch = false;
   if (model_state->always_pad_to_max_batch_.compare("1") == 0)
@@ -797,7 +843,7 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   try {
     std::string err_msg = instance_state->trt_onnx_model_->Prepare(
         ss_logs, model_state->mOrtEnv, full_onnx_file_name,
-        model_state->state_pairs_, max_connection, device_id,
+        model_state->state_pairs_, model_state->buffer_config_, device_id,
         model_state->pref_batch_sizes_, model_state->input_tensors_,
         model_state->output_tensors_, model_state->start_tensor_name_, useTrtEp,
         useFp16, store_states_as_fp16, pad_to_max_batch, enable_trt_caching,
@@ -948,10 +994,12 @@ TRITONBACKEND_ModelInstanceExecute(
       correlation_id = std::to_string(u64_correlation_id);
     } else {
       const char* str_correlation_id = "";
+#ifdef TRITON_SUPPORTS_STRING_CORRID
       GUARDED_RESPOND_IF_ERROR(
           responses, r,
           TRITONBACKEND_RequestCorrelationIdString(
               request, &str_correlation_id));
+#endif
       correlation_id = std::string(str_correlation_id);
     }
 

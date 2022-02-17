@@ -89,16 +89,20 @@ parameters [
     value: { string_value: "<<<Accumulate_In, Accumulate_Out>>>" }
   },
   {
-    key: "first_chunk_size"
+    key: "initial_buffer_size"
     value: { string_value: "512" }
   },
   {
-    key: "chunk_size"
+    key: "consequent_buffer_size"
     value: { string_value: "100" }
   },
   {
-    key: "min_free_threshold"
+    key: "buffer_alloc_threshold"
     value: { string_value: "32" }
+  },
+  {
+    key: "buffer_dealloc_threshold"
+    value: { string_value: "200" }
   },
   {
     key: "error_inject_rate"

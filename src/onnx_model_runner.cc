@@ -163,7 +163,8 @@ guarded_resizeAll(
 std::string
 TrtOnnxModel::Prepare(
     std::stringstream& ss_logs, std::shared_ptr<Ort::Env> ort_env,
-    std::string model_path, std::string state_pairs, int maxNbConnections,
+    std::string model_path, std::string state_pairs,
+    const BufferConfig& buffer_config,
     int gpuId, std::vector<int64_t>& pref_batch_sizes,
     const std::vector<TritonTensorInfo>& input_tensors,
     const std::vector<TritonTensorInfo>& output_tensors,
@@ -182,21 +183,25 @@ TrtOnnxModel::Prepare(
   log_stream_t& info_ss = (mLogLevel >= 0 ? ss_logs : ss_null);
 #endif
 
-
+  mBufferConfig = buffer_config;
   mMetricLoggingFreqSeconds = metricLoggingFreq;
   RETURN_IF_FALSE(
-      maxNbConnections >= mBatchDimMax,
-      "Max connections should be larger than or equal to the max batch size");
+      mBufferConfig.initial_buffer_size >= mBatchDimMax,
+      "Initial buffer size must be larger than or equal to the max batch size");
   mPreferredBatchSizes = pref_batch_sizes;
-  mMaxNbConnections = maxNbConnections;
-  info_ss << "Maximum connections allowed in the backend: " << mMaxNbConnections
+  info_ss << "Maximum connections allowed in the backend: "
+          << mBufferConfig.max_connections
           << std::endl;
   mSequenceTimeoutMicroseconds = seq_timeout_us;
   // setup storage buffer chunks
-  mNumChunks = 10; // ((max-min)/chunk_size)+1; // TODO: 
-  mStoreAvailableIds.resize(mNumChunks);
+  mMaxChunks = 1 + (
+    (mBufferConfig.max_connections - mBufferConfig.initial_buffer_size) /
+                     mBufferConfig.consequent_buffer_size);
+  mMaxChunks = std::max(mMaxChunks, 1);
+  mNumChunks = 1; // always start with only 1 chunk
+  mStoreAvailableIds.resize(mMaxChunks);
   // populate the available indices for the buffers
-  for (int i = 0; i < mMaxNbConnections; ++i)
+  for (int i = 0; i < mBufferConfig.initial_buffer_size; ++i)
     mStoreAvailableIds[0].insert(mStoreAvailableIds[0].end(), i);
   mInputTritonTensorInfo = input_tensors;
   mOutputTritonTensorInfo = output_tensors;
@@ -735,16 +740,16 @@ TrtOnnxModel::Prepare(
     verbose_ss << std::endl;
   }
 
-  mStoredStates.reserve(mNumChunks);
-  std::vector<std::unique_ptr<samplesCommon::ManagedBufferInternal>> chunk0;
+  mStoredStates.resize(mMaxChunks);
+  auto& chunk0 = mStoredStates[0];
   for (auto& iTensor : mStateTensors) {
     // allocate the storage space for the storage buffer
-    if (maxNbConnections != -1) {
+    if (mBufferConfig.initial_buffer_size > 0) {
       auto dimsMaxCon = iTensor.mDim;
-      dimsMaxCon.d[iTensor.mBatchDim] = maxNbConnections;
+      dimsMaxCon.d[iTensor.mBatchDim] = mBufferConfig.initial_buffer_size;
       chunk0.emplace_back(
           allocate_tensor(dimsMaxCon, mUseGpu, mStoreStatesAsFp16));
-      iTensor.mStoreBuffer.resize(mNumChunks);
+      iTensor.mStoreBuffer.resize(mMaxChunks);
       iTensor.mStoreBuffer[0] = chunk0.back()->data(mUseGpu);
     }
     // find the matching output tensor
@@ -752,7 +757,6 @@ TrtOnnxModel::Prepare(
       iTensor.AddOutputNameIfMatch(jTensor.first, jTensor.second);
     }
   }
-  mStoredStates.push_back(std::move(chunk0));
 
   verbose_ss << "State Tensors " << std::endl;
   for (const auto& iTensor : mStateTensors) {
@@ -761,17 +765,17 @@ TrtOnnxModel::Prepare(
   }
 
   try {
-    if (maxNbConnections != -1) {
+    if (mBufferConfig.initial_buffer_size > 0) {
       mNumStates = mStateTensors.size();
       // allocate device buffers for storing/restoring the internal states
-      mStorageBufferHost.resize(mNumChunks);
+      mStorageBufferHost.resize(mMaxChunks);
       mStorageBufferHost[0].resize(mNumStates); // only resize chunk0 for now
       mInputStateBufferHost.resize(mNumStates);
       mOutputStateBufferHost.resize(mNumStates);
       mBufferSizeXHost.resize(mNumStates);
       mBufferSizeYHost.resize(mNumStates);
       mStoreIdHost.resize(mBatchDimMax*2);
-      mCorrIdToDelete.reserve(maxNbConnections);
+      mCorrIdToDelete.reserve(mBufferConfig.initial_buffer_size);
       for (int i = 0; i < mNumStates; ++i) {
         mStorageBufferHost[0][i] = mStateTensors[i].mStoreBuffer[0];
         mInputStateBufferHost[i] =
@@ -795,12 +799,12 @@ TrtOnnxModel::Prepare(
       }
 
       if (mUseGpu) {
-        mStorageBufferDevicePtrOnHost.resize(mNumChunks, nullptr);
+        mStorageBufferDevicePtrOnHost.resize(mMaxChunks, nullptr);
         RETURN_IF_CUDA_ERROR(cudaMalloc(
             reinterpret_cast<void**>(&mStorageBufferDevice),
-            mNumChunks * sizeof(void**)));
+            mMaxChunks * sizeof(void**)));
         // allocate pointers for all chunks
-        for (int i=0; i<mNumChunks; ++i) {
+        for (int i=0; i<mMaxChunks; ++i) {
           RETURN_IF_CUDA_ERROR(cudaMalloc(
               reinterpret_cast<void**>(&mStorageBufferDevicePtrOnHost[i]),
               mNumStates * sizeof(void*)));
@@ -824,7 +828,7 @@ TrtOnnxModel::Prepare(
         // copy the storage buffer pointers
         RETURN_IF_CUDA_ERROR(cudaMemcpy(
             mStorageBufferDevice, mStorageBufferDevicePtrOnHost.data(),
-            mNumChunks * sizeof(void**), cudaMemcpyHostToDevice));
+            mMaxChunks * sizeof(void**), cudaMemcpyHostToDevice));
         // only copy the first chunk's pointers for now
         // as we allocate new chunks, we need to copy the pointers as well
         RETURN_IF_CUDA_ERROR(cudaMemcpy(
@@ -953,8 +957,8 @@ TrtOnnxModel::prepareDeviceStoreIds(
    */
   time_point_t now = NOW();
   // check the IDs in use for timeout
-  for (auto item : mStoreIdMap) {
-    int64_t time_lapsed = DURATION_MICRO(now - std::get<2>(item.second)).count();
+  for (auto& item : mStoreIdMap) {
+    int64_t time_lapsed = DURATION_MICRO(now-std::get<2>(item.second)).count();
     if (time_lapsed > mSequenceTimeoutMicroseconds) {
       // timeout ocurred since this sequence ID was used
       // remove its allocation of storage buffer
@@ -970,7 +974,7 @@ TrtOnnxModel::prepareDeviceStoreIds(
     }
   }
   // We must delete the timed-out sequences first to make room for new sequences
-  for (auto corrId : mCorrIdToDelete) {
+  for (auto& corrId : mCorrIdToDelete) {
     verbose_ss << "Timeout ocurred for CorrID : " << corrId << std::endl;
     const int chunk_id = std::get<0>(mStoreIdMap[corrId]);
     const int buffer_idx = std::get<1>(mStoreIdMap[corrId]);
@@ -985,27 +989,28 @@ TrtOnnxModel::prepareDeviceStoreIds(
       mStoreIdHost[i*2+1] = -1;  // signal for not storing/restoring states
       continue;
     }
-    auto corrId = inferenceTasks[i].mCorrId;
+    auto& corrId = inferenceTasks[i].mCorrId;
     auto foundId = mStoreIdMap.find(corrId);
     if (foundId == mStoreIdMap.end()) {
-      size_t store_id = 0;
-      for (; store_id < mStoreAvailableIds.size(); ++store_id) {
-        if (!mStoreAvailableIds[store_id].empty()) {
+      int chunk_id = 0;
+      for (; chunk_id < mNumChunks; ++chunk_id) {
+        if (!mStoreAvailableIds[chunk_id].empty()) {
           break;
         }
       }
-      if (store_id >= mStoreAvailableIds.size()) {
+      if (chunk_id >= mNumChunks) {
         // all chunks are full, which will happen when we reached max
         inferenceTasks[i].err_msg = "Too many simultaneous connections";
         mStoreIdHost[i*2] = -1;  // no empty slots
         mStoreIdHost[i*2+1] = -1;  // no empty slots
         continue;
       }
-      const int idx_to_use =
-          *mStoreAvailableIds[store_id].begin();  // get the first available
-      mStoreAvailableIds[store_id].erase(mStoreAvailableIds[store_id].begin());  // then remove it
-      mStoreIdMap[corrId] = make_tuple(store_id, idx_to_use, now);
-      mStoreIdHost[i*2] = store_id;
+      // get the first available
+      const int idx_to_use = *mStoreAvailableIds[chunk_id].begin();
+      // then remove it
+      mStoreAvailableIds[chunk_id].erase(mStoreAvailableIds[chunk_id].begin());
+      mStoreIdMap[corrId] = make_tuple(chunk_id, idx_to_use, now);
+      mStoreIdHost[i*2] = chunk_id;
       mStoreIdHost[i*2+1] = idx_to_use;
 #ifdef VERBOSE_STORAGE_ACTIVITY
       verbose_ss << "Assigning new index for storage: chunk=" 
@@ -1044,7 +1049,8 @@ TrtOnnxModel::storeStates_CPU_FP32(
       const int buffer_idx = mStoreIdHost[j*2+1];
       if (chunk_id < 0 || buffer_idx < 0)
         continue;  // no empty slots
-      float* storageBuffer = static_cast<float*>(mStorageBufferHost[chunk_id][i]);
+      float* storageBuffer =
+              static_cast<float*>(mStorageBufferHost[chunk_id][i]);
       for (size_t ix = 0; ix < sizeX; ++ix) {
         for (size_t iy = 0; iy < sizeY; ++iy) {
           storageBuffer[buffer_idx * sizeX * sizeY + ix * sizeY + iy] =
@@ -1070,7 +1076,8 @@ TrtOnnxModel::restoreStates_CPU_FP32(
       const int buffer_idx = mStoreIdHost[j*2+1];
       if (chunk_id < 0 || buffer_idx < 0)
         continue;  // no empty slots
-      float* storageBuffer = static_cast<float*>(mStorageBufferHost[chunk_id][i]);
+      float* storageBuffer =
+              static_cast<float*>(mStorageBufferHost[chunk_id][i]);
       for (size_t ix = 0; ix < sizeX; ++ix) {
         for (size_t iy = 0; iy < sizeY; ++iy) {
           mInputStateBufferHost[i][ix * batchStride * sizeY + j * sizeY + iy] =
@@ -1095,7 +1102,8 @@ TrtOnnxModel::storeStates_CPU_FP16(
       const int buffer_idx = mStoreIdHost[j*2+1];
       if (chunk_id < 0 || buffer_idx < 0)
         continue;  // no empty slots
-      __half* storageBuffer = static_cast<__half*>(mStorageBufferHost[chunk_id][i]);
+      __half* storageBuffer =
+              static_cast<__half*>(mStorageBufferHost[chunk_id][i]);
       for (size_t ix = 0; ix < sizeX; ++ix) {
         for (size_t iy = 0; iy < sizeY; ++iy) {
           storageBuffer[buffer_idx * sizeX * sizeY + ix * sizeY + iy] =
@@ -1122,7 +1130,8 @@ TrtOnnxModel::restoreStates_CPU_FP16(
       const int buffer_idx = mStoreIdHost[j*2+1];
       if (chunk_id < 0 || buffer_idx < 0)
         continue;  // no empty slots
-      __half* storageBuffer = static_cast<__half*>(mStorageBufferHost[chunk_id][i]);
+      __half* storageBuffer =
+              static_cast<__half*>(mStorageBufferHost[chunk_id][i]);
       for (size_t ix = 0; ix < sizeX; ++ix) {
         for (size_t iy = 0; iy < sizeY; ++iy) {
           mInputStateBufferHost[i][ix * batchStride * sizeY + j * sizeY + iy] =
@@ -1229,6 +1238,82 @@ TrtOnnxModel::report_time(log_stream_t& verbose_ss, log_stream_t& info_ss)
   }
 }
 
+std::string
+TrtOnnxModel::AllocateNewChunk(log_stream_t& verbose_ss, log_stream_t& info_ss)
+{
+  const int chunkId = mNumChunks;
+  auto& newChunk = mStoredStates[chunkId];
+  info_ss << "Allocating new chunk ... # " << chunkId << std::endl;
+  mStorageBufferHost[chunkId].resize(mNumStates);
+  for (int i = 0; i < mNumStates; ++i) {
+    auto& iTensor = mStateTensors[i];
+    // allocate the storage space for the storage buffer
+    auto dims = iTensor.mDim;
+    dims.d[iTensor.mBatchDim] = mBufferConfig.consequent_buffer_size;
+    newChunk.emplace_back(
+        allocate_tensor(dims, mUseGpu, mStoreStatesAsFp16));
+
+    const auto statesPtr = newChunk.back()->data(mUseGpu);
+    // mStoreBuffer is already resized, so we can just save the pointers
+    iTensor.mStoreBuffer[chunkId] = statesPtr;
+    // update the storage buffer pointers
+    mStorageBufferHost[chunkId][i] = statesPtr;
+  }
+  RETURN_IF_CUDA_ERROR(cudaMemcpy(
+      mStorageBufferDevicePtrOnHost[chunkId],
+      mStorageBufferHost[chunkId].data(),
+      mNumStates * sizeof(void*), cudaMemcpyHostToDevice));
+  for (int i = 0; i < mBufferConfig.consequent_buffer_size; ++i)
+    mStoreAvailableIds[chunkId].insert(mStoreAvailableIds[chunkId].end(), i);
+  mNumChunks++;
+  info_ss << "Allocating new chunk ... # " << chunkId << " [DONE]" << std::endl;
+  return std::string();
+}
+
+std::string
+TrtOnnxModel::DeAllocateChunk(log_stream_t& verbose_ss, log_stream_t& info_ss)
+{
+  const int chunkId = mNumChunks - 1;
+  info_ss << "DeAllocating chunk ... # " << chunkId << std::endl;
+  // remove the references first
+  for (int i = 0; i < mNumStates; ++i) {
+    mStateTensors[i].mStoreBuffer[chunkId] = nullptr;
+    mStorageBufferHost[chunkId][i] = nullptr;
+    // now deallocate the memory
+    mStoredStates[chunkId][i].reset();
+  }
+  mStoredStates[chunkId].clear();
+  mStoreAvailableIds[chunkId].clear();
+  mNumChunks--;
+  info_ss << "DeAllocating chunk ... # " << chunkId << " [DONE]" << std::endl;
+  return std::string();
+}
+
+std::string
+TrtOnnxModel::TryAndDeAllocateChunk(
+  log_stream_t& verbose_ss, log_stream_t& info_ss)
+{
+  if (mNumChunks <= 1) {
+    // we cannot deallocate the first chunk
+    return std::string("Cannot delete the first chunk.");
+  }
+  info_ss << "Checking if we can deallocate the last chunk ... " << std::endl;
+  // Only check the last chunk, if it is completely free, deallocate it
+  info_ss << "Number of chunks: " << mNumChunks << std::endl;
+  verbose_ss << "Free slots: ";
+  for (int i=0; i<mNumChunks; ++i) {
+    verbose_ss << mStoreAvailableIds[i].size() << ",";
+  }
+  verbose_ss << std::endl;
+  size_t freeSlots = mStoreAvailableIds[mNumChunks-1].size();
+  info_ss << "Free slots in last chunk: " << freeSlots << std::endl;
+  if (freeSlots == static_cast<size_t>(mBufferConfig.consequent_buffer_size)) {
+    // buffer is completely free, so we can safely deallocate
+    return DeAllocateChunk(verbose_ss, info_ss);
+  }
+  return std::string();
+}
+
 #ifndef NO_TRITON
 #include "response_util.h"
 #endif // NO_TRITON
@@ -1236,7 +1321,8 @@ TrtOnnxModel::report_time(log_stream_t& verbose_ss, log_stream_t& info_ss)
 std::string
 TrtOnnxModel::InferTasks(
     std::stringstream& ss_logs, std::vector<InferenceTask>& inferenceTasks,
-    int batchSize, void* responses, uint64_t& comp_start_ns, uint64_t& comp_end_ns)
+    int batchSize, void* responses, uint64_t& comp_start_ns,
+    uint64_t& comp_end_ns)
 {
 #ifdef VERBOSE_COUT
   log_stream_t& verbose_ss = std::cout;
@@ -1421,7 +1507,8 @@ TrtOnnxModel::InferTasks(
 #ifndef NO_TRITON
     if (responses != nullptr) {
       // Send the responses early
-      triton::backend::stateful::utils::SendSingleResponse(inferenceTasks[j], j, responses);
+      triton::backend::stateful::utils::SendSingleResponse(
+        inferenceTasks[j], j, responses);
     }
 #endif // NO_TRITON
   }
@@ -1431,13 +1518,28 @@ TrtOnnxModel::InferTasks(
     if (inferenceTasks[i].mEnd && inferenceTasks[i].err_msg.empty()) {
       // the task with EndSequence signal finished successfully
       // release the storage buffer
-      auto corrId = inferenceTasks[i].mCorrId;
+      auto& corrId = inferenceTasks[i].mCorrId;
       verbose_ss << "EndSequence received for CorrID : " << corrId << std::endl;
       const int chunk_id = std::get<0>(mStoreIdMap[corrId]);
       const int buffer_idx = std::get<1>(mStoreIdMap[corrId]);
       mStoreAvailableIds[chunk_id].insert(buffer_idx);
       mStoreIdMap.erase(corrId);
     }
+  }
+
+  // allocate/free chunks here
+  int total_free = 0;
+  for (int i=0; i<mNumChunks; ++i) {
+    total_free += mStoreAvailableIds[i].size();
+  }
+  if (total_free < mBufferConfig.alloc_threshold &&
+      mNumChunks < mMaxChunks) {
+    // we need a new chunk
+    AllocateNewChunk(verbose_ss, info_ss);
+  }
+  else if (total_free > mBufferConfig.dealloc_threshold && mNumChunks > 1) {
+    // try de-allocating
+    TryAndDeAllocateChunk(verbose_ss, info_ss);
   }
 
   capture_time(mHostPostTime, 1, batchSize);
