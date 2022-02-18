@@ -810,13 +810,17 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
         TRITONSERVER_LOG_WARN,
         "Invalid value in 'max_candidate_sequence_use_ratio'.");
   }
-  model_state->buffer_config_.max_connections = static_cast<int64_t>(
-      model_state->buffer_config_.max_connections * max_connection_use_ratio);
+  // create a copy of the buffer config so that we don't modify the original
+  BufferConfig buffer_config = model_state->buffer_config_;
+  buffer_config.max_connections = static_cast<int64_t>(
+      buffer_config.max_connections * max_connection_use_ratio);
+  buffer_config.initial_buffer_size =
+    std::min(buffer_config.initial_buffer_size, buffer_config.max_connections);
 
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
       (std::string("Max connectionss in the backend: ") +
-       std::to_string(model_state->buffer_config_.max_connections)).c_str());
+       std::to_string(buffer_config.max_connections)).c_str());
 
   bool pad_to_max_batch = false;
   if (model_state->always_pad_to_max_batch_.compare("1") == 0)
@@ -843,7 +847,7 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   try {
     std::string err_msg = instance_state->trt_onnx_model_->Prepare(
         ss_logs, model_state->mOrtEnv, full_onnx_file_name,
-        model_state->state_pairs_, model_state->buffer_config_, device_id,
+        model_state->state_pairs_, buffer_config, device_id,
         model_state->pref_batch_sizes_, model_state->input_tensors_,
         model_state->output_tensors_, model_state->start_tensor_name_, useTrtEp,
         useFp16, store_states_as_fp16, pad_to_max_batch, enable_trt_caching,

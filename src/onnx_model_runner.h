@@ -32,6 +32,7 @@
 #include <sstream>
 #include <unordered_map>
 #include "buffers.h"
+#include "buffers_internal.h"
 #include "common.h"
 
 using time_point_t = std::chrono::steady_clock::time_point;  // use wall clock
@@ -65,11 +66,47 @@ GetTimeStampForLogs()
 
 namespace samplesCommon {
 
+template <typename AllocFunc, typename FreeFunc>
+class GenericBufferInternal : public GenericBufferBase<AllocFunc, FreeFunc>
+{
+  public:
+    GenericBufferInternal(nvinfer1::DataType type = nvinfer1::DataType::kFLOAT)
+      : GenericBufferBase<AllocFunc, FreeFunc>(type) {}
+
+    void resize_async(size_t newSize, const cudaStream_t strm)
+    {
+      this->mSize = newSize;
+      if (this->mCapacity < newSize) {
+        cudaFreeAsync(this->mBuffer, strm);
+        if (cudaMallocAsync(&(this->mBuffer), this->nbBytes(), strm)
+            != cudaSuccess) {
+          throw std::bad_alloc{};
+        }
+        this->mCapacity = newSize;
+      }
+      if (newSize == 0) { // size=0 => cudaFreeAsync
+        cudaFreeAsync(this->mBuffer, strm);
+        this->mBuffer = nullptr;
+        this->mCapacity = 0;
+      }
+    }
+    void resize_async(const nvinfer1::Dims& dims, const cudaStream_t strm)
+    {
+      return this->resize_async(samplesCommon::volume(dims), strm);
+    }
+};
+
+using DeviceBufferInternal = GenericBufferInternal<DeviceAllocator, DeviceFree>;
 
 class ManagedBufferInternal {
  public:
-  DeviceBuffer deviceBuffer;
+  DeviceBufferInternal deviceBuffer;
   HostBuffer hostBuffer;
+  ManagedBufferInternal() :
+    deviceBuffer(nvinfer1::DataType::kFLOAT),
+    hostBuffer(nvinfer1::DataType::kFLOAT) {}
+  ManagedBufferInternal(nvinfer1::DataType dt, nvinfer1::DataType ht)
+    : deviceBuffer(dt), hostBuffer(ht) {}
 
   // resize host buffer and selectively resize GPU buffer if isdevice is set
   void resizeAll(const nvinfer1::Dims& dims, bool isdevice)
@@ -93,6 +130,22 @@ class ManagedBufferInternal {
       return deviceBuffer.data();
     else
       return hostBuffer.data();
+  }
+  void resize_async(
+    const nvinfer1::Dims& dims, bool isdevice, const cudaStream_t strm)
+  {
+    if (isdevice)
+      deviceBuffer.resize_async(dims, strm);
+    else
+      hostBuffer.resize(dims);
+  }
+  void resize_async(
+    size_t newSize, bool isdevice, const cudaStream_t strm)
+  {
+    if (isdevice)
+      deviceBuffer.resize_async(newSize, strm);
+    else
+      hostBuffer.resize(newSize);
   }
 };
 
@@ -376,10 +429,10 @@ class TrtOnnxModel {
 
   void storeStates(
       std::vector<InferenceTask>& inferenceTasks, int batchSize,
-      int batchStride, cudaStream_t& cudaStreamToUse);
+      int batchStride, cudaStream_t cudaStreamToUse);
   void restoreStates(
       std::vector<InferenceTask>& inferenceTasks, int batchSize,
-      int batchStride, cudaStream_t& cudaStreamToUse);
+      int batchStride, cudaStream_t cudaStreamToUse);
   std::string prepareDeviceStoreIds(
       log_stream_t& verbose_ss, std::vector<InferenceTask>& inferenceTasks,
       int batchSize);
@@ -411,6 +464,7 @@ class TrtOnnxModel {
   bool mUseTrtEp{true};
   bool mStoreStatesAsFp16{false};
   std::string mDeviceBindingString;
+  const bool mAllocFreeAsync{true};
 
   int mBatchDimMin{1};
   int mBatchDimMax{2};

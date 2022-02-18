@@ -121,14 +121,20 @@ append_to_trtexec_string(
 
 static inline std::unique_ptr<samplesCommon::ManagedBufferInternal>
 allocate_tensor(
-    const nvinfer1::Dims& dim, const bool use_gpu, const bool alloc_fp16)
+    const nvinfer1::Dims& dim, const bool use_gpu, const bool alloc_fp16,
+    const cudaStream_t strm=nullptr)
 {
   std::unique_ptr<samplesCommon::ManagedBufferInternal> buffer;
   try {
     buffer.reset(new samplesCommon::ManagedBufferInternal{
         alloc_fp16 ? nvinfer1::DataType::kHALF : nvinfer1::DataType::kFLOAT,
         alloc_fp16 ? nvinfer1::DataType::kHALF : nvinfer1::DataType::kFLOAT});
-    buffer->resize(dim, use_gpu);
+    if (strm == nullptr) {
+      buffer->resize(dim, use_gpu);
+    }
+    else {
+      buffer->resize_async(dim, use_gpu, strm);
+    }
   }
   catch (const std::exception& e) {
     std::cerr << "ERROR: Couldn't allocate memory for state tensors. "
@@ -189,15 +195,17 @@ TrtOnnxModel::Prepare(
       mBufferConfig.initial_buffer_size >= mBatchDimMax,
       "Initial buffer size must be larger than or equal to the max batch size");
   mPreferredBatchSizes = pref_batch_sizes;
-  info_ss << "Maximum connections allowed in the backend: "
-          << mBufferConfig.max_connections
-          << std::endl;
   mSequenceTimeoutMicroseconds = seq_timeout_us;
   // setup storage buffer chunks
   mMaxChunks = 1 + (
     (mBufferConfig.max_connections - mBufferConfig.initial_buffer_size) /
                      mBufferConfig.consequent_buffer_size);
   mMaxChunks = std::max(mMaxChunks, 1);
+  mBufferConfig.max_connections = mBufferConfig.initial_buffer_size +
+                          (mMaxChunks-1)*mBufferConfig.consequent_buffer_size;
+  info_ss << "Maximum connections allowed in the backend: "
+          << mBufferConfig.max_connections
+          << std::endl;
   mNumChunks = 1; // always start with only 1 chunk
   mStoreAvailableIds.resize(mMaxChunks);
   // populate the available indices for the buffers
@@ -1147,7 +1155,7 @@ TrtOnnxModel::restoreStates_CPU_FP16(
 void
 TrtOnnxModel::storeStates(
     std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride,
-    cudaStream_t &cudaStreamToUse)
+    cudaStream_t cudaStreamToUse)
 {
   if (mUseGpu) {
     if (mStoreStatesAsFp16) {
@@ -1173,7 +1181,7 @@ TrtOnnxModel::storeStates(
 void
 TrtOnnxModel::restoreStates(
     std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride,
-    cudaStream_t &cudaStreamToUse)
+    cudaStream_t cudaStreamToUse)
 {
   if (mUseGpu) {
     if (mStoreStatesAsFp16) {
@@ -1251,7 +1259,8 @@ TrtOnnxModel::AllocateNewChunk(log_stream_t& verbose_ss, log_stream_t& info_ss)
     auto dims = iTensor.mDim;
     dims.d[iTensor.mBatchDim] = mBufferConfig.consequent_buffer_size;
     newChunk.emplace_back(
-        allocate_tensor(dims, mUseGpu, mStoreStatesAsFp16));
+        allocate_tensor(dims, mUseGpu, mStoreStatesAsFp16,
+          mAllocFreeAsync ? mCudaStreamExe : nullptr));
 
     const auto statesPtr = newChunk.back()->data(mUseGpu);
     // mStoreBuffer is already resized, so we can just save the pointers
@@ -1279,7 +1288,11 @@ TrtOnnxModel::DeAllocateChunk(log_stream_t& verbose_ss, log_stream_t& info_ss)
   for (int i = 0; i < mNumStates; ++i) {
     mStateTensors[i].mStoreBuffer[chunkId] = nullptr;
     mStorageBufferHost[chunkId][i] = nullptr;
-    // now deallocate the memory
+    if (mAllocFreeAsync) {
+      // now deallocate the memory asynchronously
+      mStoredStates[chunkId][i]->resize_async(0, mUseGpu, mCudaStreamExe);
+    }
+    // reset() deallocates synchronously if it is not already deallocated
     mStoredStates[chunkId][i].reset();
   }
   mStoredStates[chunkId].clear();
