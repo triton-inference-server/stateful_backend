@@ -311,14 +311,14 @@ class BufferConfig {
 public:
   int64_t max_connections;
   int64_t initial_buffer_size;
-  int64_t consequent_buffer_size;
+  int64_t subsequent_buffer_size;
   int64_t alloc_threshold;
   int64_t dealloc_threshold;
 
   std::string to_string() {
     std::stringstream ss;
     ss << "[" << initial_buffer_size << ",";
-    ss << max_connections << "," << consequent_buffer_size << "]";
+    ss << max_connections << "," << subsequent_buffer_size << "]";
     ss << " [" << alloc_threshold << "," << dealloc_threshold << "]";
     return ss.str();
   }

@@ -255,7 +255,7 @@ ModelState::InitModelState()
   max_sequence_idle_microseconds_ = 100000000;
   buffer_config_.max_connections = 1280;
   buffer_config_.initial_buffer_size = 400;
-  buffer_config_.consequent_buffer_size = 100;
+  buffer_config_.subsequent_buffer_size = 100;
   buffer_config_.alloc_threshold = 32;
   buffer_config_.dealloc_threshold = 150;
   max_candidate_sequences_ = buffer_config_.max_connections;
@@ -369,8 +369,8 @@ ModelState::InitModelState()
   buffer_config_.max_connections = max_candidate_sequences_;
   RETURN_IF_ERROR(GetInt64Parameter(parameters, "initial_buffer_size",
       buffer_config_.initial_buffer_size));
-  RETURN_IF_ERROR(GetInt64Parameter(parameters, "consequent_buffer_size",
-      buffer_config_.consequent_buffer_size));
+  RETURN_IF_ERROR(GetInt64Parameter(parameters, "subsequent_buffer_size",
+      buffer_config_.subsequent_buffer_size));
   RETURN_IF_ERROR(GetInt64Parameter(parameters, "buffer_alloc_threshold",
       buffer_config_.alloc_threshold));
   RETURN_IF_ERROR(GetInt64Parameter(parameters, "buffer_dealloc_threshold",

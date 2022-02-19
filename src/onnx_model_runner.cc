@@ -199,10 +199,10 @@ TrtOnnxModel::Prepare(
   // setup storage buffer chunks
   mMaxChunks = 1 + (
     (mBufferConfig.max_connections - mBufferConfig.initial_buffer_size) /
-                     mBufferConfig.consequent_buffer_size);
+                     mBufferConfig.subsequent_buffer_size);
   mMaxChunks = std::max(mMaxChunks, 1);
   mBufferConfig.max_connections = mBufferConfig.initial_buffer_size +
-                          (mMaxChunks-1)*mBufferConfig.consequent_buffer_size;
+                          (mMaxChunks-1)*mBufferConfig.subsequent_buffer_size;
   info_ss << "Maximum connections allowed in the backend: "
           << mBufferConfig.max_connections
           << std::endl;
@@ -1257,7 +1257,7 @@ TrtOnnxModel::AllocateNewChunk(log_stream_t& verbose_ss, log_stream_t& info_ss)
     auto& iTensor = mStateTensors[i];
     // allocate the storage space for the storage buffer
     auto dims = iTensor.mDim;
-    dims.d[iTensor.mBatchDim] = mBufferConfig.consequent_buffer_size;
+    dims.d[iTensor.mBatchDim] = mBufferConfig.subsequent_buffer_size;
     newChunk.emplace_back(
         allocate_tensor(dims, mUseGpu, mStoreStatesAsFp16,
           mAllocFreeAsync ? mCudaStreamExe : nullptr));
@@ -1272,7 +1272,7 @@ TrtOnnxModel::AllocateNewChunk(log_stream_t& verbose_ss, log_stream_t& info_ss)
       mStorageBufferDevicePtrOnHost[chunkId],
       mStorageBufferHost[chunkId].data(),
       mNumStates * sizeof(void*), cudaMemcpyHostToDevice));
-  for (int i = 0; i < mBufferConfig.consequent_buffer_size; ++i)
+  for (int i = 0; i < mBufferConfig.subsequent_buffer_size; ++i)
     mStoreAvailableIds[chunkId].insert(mStoreAvailableIds[chunkId].end(), i);
   mNumChunks++;
   info_ss << "Allocating new chunk ... # " << chunkId << " [DONE]" << std::endl;
@@ -1320,7 +1320,7 @@ TrtOnnxModel::TryAndDeAllocateChunk(
   verbose_ss << std::endl;
   size_t freeSlots = mStoreAvailableIds[mNumChunks-1].size();
   info_ss << "Free slots in last chunk: " << freeSlots << std::endl;
-  if (freeSlots == static_cast<size_t>(mBufferConfig.consequent_buffer_size)) {
+  if (freeSlots == static_cast<size_t>(mBufferConfig.subsequent_buffer_size)) {
     // buffer is completely free, so we can safely deallocate
     return DeAllocateChunk(verbose_ss, info_ss);
   }

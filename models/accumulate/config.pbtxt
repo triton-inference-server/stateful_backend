@@ -93,7 +93,7 @@ parameters [
     value: { string_value: "512" }
   },
   {
-    key: "consequent_buffer_size"
+    key: "subsequent_buffer_size"
     value: { string_value: "100" }
   },
   {
