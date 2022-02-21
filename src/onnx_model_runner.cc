@@ -189,6 +189,18 @@ TrtOnnxModel::Prepare(
   log_stream_t& info_ss = (mLogLevel >= 0 ? ss_logs : ss_null);
 #endif
 
+  // sanity check the provided buffer config
+  RETURN_IF_FALSE(
+    buffer_config.max_connections >= buffer_config.initial_buffer_size,
+    "Initial buffer size cannot be larger than maximum allowed connections.");
+  RETURN_IF_FALSE(
+    buffer_config.alloc_threshold <= buffer_config.initial_buffer_size,
+    "Initial buffer size cannot be smaller than allocation threshold.");
+  if (buffer_config.dealloc_threshold >= buffer_config.alloc_threshold) {
+    info_ss << "WARNING: Deallocation threshold should not"
+            << " be smaller than allocation threshold." << std::endl;
+  }
+
   mBufferConfig = buffer_config;
   mMetricLoggingFreqSeconds = metricLoggingFreq;
   RETURN_IF_FALSE(

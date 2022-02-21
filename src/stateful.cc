@@ -369,12 +369,28 @@ ModelState::InitModelState()
   buffer_config_.max_connections = max_candidate_sequences_;
   RETURN_IF_ERROR(GetInt64Parameter(parameters, "initial_buffer_size",
       buffer_config_.initial_buffer_size));
+  RETURN_ERROR_IF_FALSE(
+    buffer_config_.initial_buffer_size >= 0,
+    TRITONSERVER_ERROR_INVALID_ARG,
+    std::string("Invalid value for `initial_buffer_size`"));
   RETURN_IF_ERROR(GetInt64Parameter(parameters, "subsequent_buffer_size",
       buffer_config_.subsequent_buffer_size));
+  RETURN_ERROR_IF_FALSE(
+    buffer_config_.subsequent_buffer_size >= 0,
+    TRITONSERVER_ERROR_INVALID_ARG,
+    std::string("Invalid value for `subsequent_buffer_size`"));
   RETURN_IF_ERROR(GetInt64Parameter(parameters, "buffer_alloc_threshold",
       buffer_config_.alloc_threshold));
+  RETURN_ERROR_IF_FALSE(
+    buffer_config_.alloc_threshold >= 0,
+    TRITONSERVER_ERROR_INVALID_ARG,
+    std::string("Invalid value for `buffer_alloc_threshold`"));
   RETURN_IF_ERROR(GetInt64Parameter(parameters, "buffer_dealloc_threshold",
       buffer_config_.dealloc_threshold));
+  RETURN_ERROR_IF_FALSE(
+    buffer_config_.dealloc_threshold >= 0,
+    TRITONSERVER_ERROR_INVALID_ARG,
+    std::string("Invalid value for `buffer_dealloc_threshold`"));
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
       (std::string("Buffer Config = ") + buffer_config_.to_string()).c_str());
