@@ -1288,10 +1288,12 @@ TrtOnnxModel::AllocateNewChunk(log_stream_t& verbose_ss, log_stream_t& info_ss)
     // update the storage buffer pointers
     mStorageBufferHost[chunkId][i] = statesPtr;
   }
-  RETURN_IF_CUDA_ERROR(cudaMemcpy(
+  if (mUseGpu) {
+    RETURN_IF_CUDA_ERROR(cudaMemcpy(
       mStorageBufferDevicePtrOnHost[chunkId],
       mStorageBufferHost[chunkId].data(),
       mNumStates * sizeof(void*), cudaMemcpyHostToDevice));
+  }
   for (int i = 0; i < mBufferConfig.subsequent_buffer_size; ++i)
     mStoreAvailableIds[chunkId].insert(mStoreAvailableIds[chunkId].end(), i);
   mNumChunks++;
