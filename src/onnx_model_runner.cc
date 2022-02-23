@@ -129,11 +129,11 @@ allocate_tensor(
     buffer.reset(new samplesCommon::ManagedBufferInternal{
         alloc_fp16 ? nvinfer1::DataType::kHALF : nvinfer1::DataType::kFLOAT,
         alloc_fp16 ? nvinfer1::DataType::kHALF : nvinfer1::DataType::kFLOAT});
-    if (strm == nullptr) {
-      buffer->resize(dim, use_gpu);
+    if (use_gpu && strm != nullptr) {
+      buffer->resize_async(dim, use_gpu, strm);
     }
     else {
-      buffer->resize_async(dim, use_gpu, strm);
+      buffer->resize(dim, use_gpu);
     }
   }
   catch (const std::exception& e) {
