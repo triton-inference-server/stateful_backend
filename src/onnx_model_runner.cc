@@ -194,6 +194,17 @@ TrtOnnxModel::Prepare(
     buffer_config.max_connections >= buffer_config.initial_buffer_size,
     "Initial buffer size cannot be larger than maximum allowed connections.");
   RETURN_IF_FALSE(
+    mBufferConfig.initial_buffer_size >= mBatchDimMax,
+    "Initial buffer size must be larger than or equal to the max batch size");
+  RETURN_IF_FALSE(
+    buffer_config.subsequent_buffer_size >= mBatchDimMax,
+    "Sbusequent buffer size must be larger than or"
+    " equal to the max batch size.");
+  RETURN_IF_FALSE(
+    buffer_config.alloc_threshold >= mBatchDimMax,
+    "Buffer allocation threshold size must be larger than or"
+    " equal to the max batch size.");
+  RETURN_IF_FALSE(
     buffer_config.alloc_threshold <= buffer_config.initial_buffer_size,
     "Initial buffer size cannot be smaller than allocation threshold.");
   if (buffer_config.dealloc_threshold >= buffer_config.alloc_threshold) {
@@ -203,9 +214,6 @@ TrtOnnxModel::Prepare(
 
   mBufferConfig = buffer_config;
   mMetricLoggingFreqSeconds = metricLoggingFreq;
-  RETURN_IF_FALSE(
-      mBufferConfig.initial_buffer_size >= mBatchDimMax,
-      "Initial buffer size must be larger than or equal to the max batch size");
   mPreferredBatchSizes = pref_batch_sizes;
   mSequenceTimeoutMicroseconds = seq_timeout_us;
   // setup storage buffer chunks
