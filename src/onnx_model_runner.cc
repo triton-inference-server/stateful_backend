@@ -194,7 +194,7 @@ TrtOnnxModel::Prepare(
     buffer_config.max_connections >= buffer_config.initial_buffer_size,
     "Initial buffer size cannot be larger than maximum allowed connections.");
   RETURN_IF_FALSE(
-    mBufferConfig.initial_buffer_size >= mBatchDimMax,
+    buffer_config.initial_buffer_size >= mBatchDimMax,
     "Initial buffer size must be larger than or equal to the max batch size");
   RETURN_IF_FALSE(
     buffer_config.subsequent_buffer_size >= mBatchDimMax,
@@ -207,9 +207,9 @@ TrtOnnxModel::Prepare(
   RETURN_IF_FALSE(
     buffer_config.alloc_threshold <= buffer_config.initial_buffer_size,
     "Initial buffer size cannot be smaller than allocation threshold.");
-  if (buffer_config.dealloc_threshold >= buffer_config.alloc_threshold) {
-    info_ss << "WARNING: Deallocation threshold should not"
-            << " be smaller than allocation threshold." << std::endl;
+  if (buffer_config.dealloc_threshold <= buffer_config.alloc_threshold) {
+    info_ss << "WARNING: Deallocation threshold should"
+            << " be larger than allocation threshold." << std::endl;
   }
 
   mBufferConfig = buffer_config;
@@ -1572,7 +1572,7 @@ TrtOnnxModel::InferTasks(
     // we need a new chunk
     AllocateNewChunk(verbose_ss, info_ss);
   }
-  else if (total_free > mBufferConfig.dealloc_threshold && mNumChunks > 1) {
+  else if (mNumChunks > 1 && total_free > mBufferConfig.dealloc_threshold) {
     // try de-allocating
     TryAndDeAllocateChunk(verbose_ss, info_ss);
   }

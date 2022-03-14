@@ -367,30 +367,40 @@ ModelState::InitModelState()
       (std::string("onnx file name = ") + onnx_file_name_).c_str());
 
   buffer_config_.max_connections = max_candidate_sequences_;
-  RETURN_IF_ERROR(GetInt64Parameter(parameters, "initial_buffer_size",
-      buffer_config_.initial_buffer_size));
-  RETURN_ERROR_IF_FALSE(
-    buffer_config_.initial_buffer_size >= 0,
-    TRITONSERVER_ERROR_INVALID_ARG,
-    std::string("Invalid value for `initial_buffer_size`"));
-  RETURN_IF_ERROR(GetInt64Parameter(parameters, "subsequent_buffer_size",
-      buffer_config_.subsequent_buffer_size));
-  RETURN_ERROR_IF_FALSE(
-    buffer_config_.subsequent_buffer_size >= 0,
-    TRITONSERVER_ERROR_INVALID_ARG,
-    std::string("Invalid value for `subsequent_buffer_size`"));
-  RETURN_IF_ERROR(GetInt64Parameter(parameters, "buffer_alloc_threshold",
-      buffer_config_.alloc_threshold));
-  RETURN_ERROR_IF_FALSE(
-    buffer_config_.alloc_threshold >= 0,
-    TRITONSERVER_ERROR_INVALID_ARG,
-    std::string("Invalid value for `buffer_alloc_threshold`"));
-  RETURN_IF_ERROR(GetInt64Parameter(parameters, "buffer_dealloc_threshold",
-      buffer_config_.dealloc_threshold));
-  RETURN_ERROR_IF_FALSE(
-    buffer_config_.dealloc_threshold >= 0,
-    TRITONSERVER_ERROR_INVALID_ARG,
-    std::string("Invalid value for `buffer_dealloc_threshold`"));
+  TRITONSERVER_Error* lazy_err_ = GetInt64Parameter(parameters, "initial_buffer_size",
+      buffer_config_.initial_buffer_size);
+  if (lazy_err_ == nullptr) { // found lazy allocation config
+    RETURN_ERROR_IF_FALSE(
+      buffer_config_.initial_buffer_size >= 0,
+      TRITONSERVER_ERROR_INVALID_ARG,
+      std::string("Invalid value for `initial_buffer_size`"));
+    RETURN_IF_ERROR(GetInt64Parameter(parameters, "subsequent_buffer_size",
+        buffer_config_.subsequent_buffer_size));
+    RETURN_ERROR_IF_FALSE(
+      buffer_config_.subsequent_buffer_size >= 0,
+      TRITONSERVER_ERROR_INVALID_ARG,
+      std::string("Invalid value for `subsequent_buffer_size`"));
+    RETURN_IF_ERROR(GetInt64Parameter(parameters, "buffer_alloc_threshold",
+        buffer_config_.alloc_threshold));
+    RETURN_ERROR_IF_FALSE(
+      buffer_config_.alloc_threshold >= 0,
+      TRITONSERVER_ERROR_INVALID_ARG,
+      std::string("Invalid value for `buffer_alloc_threshold`"));
+    RETURN_IF_ERROR(GetInt64Parameter(parameters, "buffer_dealloc_threshold",
+        buffer_config_.dealloc_threshold));
+    RETURN_ERROR_IF_FALSE(
+      buffer_config_.dealloc_threshold >= 0,
+      TRITONSERVER_ERROR_INVALID_ARG,
+      std::string("Invalid value for `buffer_dealloc_threshold`"));
+  }
+  else { // if lazy alloc config not found, mimic old behavior
+    LOG_MESSAGE(TRITONSERVER_LOG_WARN, TRITONSERVER_ErrorMessage(lazy_err_));
+    TRITONSERVER_ErrorDelete(lazy_err_);
+    buffer_config_.initial_buffer_size = max_candidate_sequences_;
+    buffer_config_.subsequent_buffer_size = max_batch_size_;
+    buffer_config_.alloc_threshold = max_batch_size_;
+    buffer_config_.dealloc_threshold = max_candidate_sequences_;
+  }
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
       (std::string("Buffer Config = ") + buffer_config_.to_string()).c_str());
