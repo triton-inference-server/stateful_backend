@@ -24,10 +24,14 @@ import os
 import sys
 import threading
 import time
+import argparse
 
 import stateful_utils
 import stateful_config
 import build_backend
+from stateful_utils import LogPrint
+
+TEST_FLAGS = None
 
 g_server_started = False
 g_server_exited = False
@@ -92,10 +96,13 @@ def stop_server(scnt):
 def RunServer(root_dir):
   print("Starting server ...")
   # create new container if not found
-  scnt = stateful_utils.get_running_container(stateful_config.TRITON_SERVER_CONTAINER_NAME)
+  server_container_name = stateful_config.TRITON_SERVER_CONTAINER_NAME
+  if TEST_FLAGS.server_container_name != "":
+    server_container_name = TEST_FLAGS.server_container_name
+  scnt = stateful_utils.get_running_container(server_container_name)
   if scnt is None:
     scnt = stateful_utils.create_container(stateful_config.TRITONSERVER_IMAGE, \
-        cnt_name=stateful_config.TRITON_SERVER_CONTAINER_NAME, \
+        cnt_name=server_container_name, \
         with_gpus=True, ports=stateful_config.TRITON_PORTS, \
         shm_size=stateful_config.TRITON_SHM_SIZE, memlock=stateful_config.TRITON_MEMLOCK, \
         stack_size=stateful_config.TRITON_STACK, volumes=TRITON_VOLUMES)
@@ -116,10 +123,13 @@ def RunServer(root_dir):
 def RunClient(root_dir):
   print("Starting client ...")
   # create new container if not found
-  ccnt = stateful_utils.get_running_container(stateful_config.TRITON_CLIENT_CONTAINER_NAME)
+  client_container_name = stateful_config.TRITON_CLIENT_CONTAINER_NAME
+  if TEST_FLAGS.client_container_name != "":
+    client_container_name = TEST_FLAGS.client_container_name
+  ccnt = stateful_utils.get_running_container(client_container_name)
   if ccnt is None:
     ccnt = stateful_utils.create_container(stateful_config.TRITONCLIENT_IMAGE, \
-        cnt_name=stateful_config.TRITON_CLIENT_CONTAINER_NAME, volumes=TRITON_VOLUMES)
+        cnt_name=client_container_name, volumes=TRITON_VOLUMES)
     ccnt.start()
   assert ccnt != None
   ccnt.reload()
@@ -169,9 +179,25 @@ def DoEverything(root_dir):
       ccnt.stop()
   return
 
+def parse_args(args=sys.argv[1:]):
+  parser = argparse.ArgumentParser("Script to test the stateful backend.")
+  parser.add_argument("--server_container_name", 
+                      type=str, default="", 
+                      help="Override the container name of the Triton server.")
+  parser.add_argument("--client_container_name", 
+                      type=str, default="", 
+                      help="Override the container name of the Client.")
+  
+  # update the global variable FLAGS
+  global TEST_FLAGS
+  TEST_FLAGS, rem_args = parser.parse_known_args(args)
+  LogPrint("ARGS:", " ".join(f'{arg}={val}' for arg, val in vars(TEST_FLAGS).items()))
+  return rem_args
+
 def main():
   root_dir = os.path.join(os.path.abspath(sys.path[0]), os.pardir)
-  build_backend.parse_args()
+  rem_args = parse_args()
+  build_backend.parse_args(rem_args)
   DoEverything(root_dir)
   return
 

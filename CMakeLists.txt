@@ -108,6 +108,7 @@ add_library(
   triton-stateful-backend SHARED
   src/stateful.cc
   src/onnx_model_runner.cc
+  src/response_util.cc
   src/cuda_kernels.cu
   ${TRT_SAMPLE_PATH}/common/logger.cpp
 )

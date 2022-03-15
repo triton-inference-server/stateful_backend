@@ -84,17 +84,18 @@ print_device_vector(int* vec, size_t size)
 
 __global__ void
 storeStates_FP32(
-    float** storage, float** states, int* sizesX, int* sizesY, int* storeids,
+    float*** storage, float** states, int* sizesX, int* sizesY, int* storeids,
     int batchStride)
 {
   int stateId = blockIdx.x;
   int batchId = blockIdx.y;
-  int storeId = storeids[batchId];
-  if (storeId < 0)
+  int chunkId = storeids[batchId*2];
+  int storeId = storeids[batchId*2+1];
+  if (chunkId < 0 || storeId < 0)
     return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
-  float* pDst = storage[stateId] + storeId * sizeX * sizeY;
+  float* pDst = storage[chunkId][stateId] + storeId * sizeX * sizeY;
   float* pSrc = states[stateId] + batchId * sizeY;
   for (int x = 0; x < sizeX; ++x) {
     for (int i = threadIdx.x; i < sizeY; i += blockDim.x) {
@@ -107,17 +108,18 @@ storeStates_FP32(
 
 __global__ void
 restoreStates_FP32(
-    float** storage, float** states, int* sizesX, int* sizesY, int* storeids,
+    float*** storage, float** states, int* sizesX, int* sizesY, int* storeids,
     int batchStride)
 {
   int stateId = blockIdx.x;
   int batchId = blockIdx.y;
-  int storeId = storeids[batchId];
-  if (storeId < 0)
+  int chunkId = storeids[batchId*2];
+  int storeId = storeids[batchId*2+1];
+  if (chunkId < 0 || storeId < 0)
     return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
-  float* pSrc = storage[stateId] + storeId * sizeX * sizeY;
+  float* pSrc = storage[chunkId][stateId] + storeId * sizeX * sizeY;
   float* pDst = states[stateId] + batchId * sizeY;
   for (int x = 0; x < sizeX; ++x) {
     for (int i = threadIdx.x; i < sizeY; i += blockDim.x) {
@@ -130,17 +132,18 @@ restoreStates_FP32(
 
 __global__ void
 storeStates_FP16(
-    __half** storage, float** states, int* sizesX, int* sizesY, int* storeids,
+    __half*** storage, float** states, int* sizesX, int* sizesY, int* storeids,
     int batchStride)
 {
   int stateId = blockIdx.x;
   int batchId = blockIdx.y;
-  int storeId = storeids[batchId];
-  if (storeId < 0)
+  int chunkId = storeids[batchId*2];
+  int storeId = storeids[batchId*2+1];
+  if (chunkId < 0 || storeId < 0)
     return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
-  __half* pDst = storage[stateId] + storeId * sizeX * sizeY;
+  __half* pDst = storage[chunkId][stateId] + storeId * sizeX * sizeY;
   float* pSrc = states[stateId] + batchId * sizeY;
   for (int x = 0; x < sizeX; ++x) {
     for (int i = threadIdx.x; i < sizeY; i += blockDim.x) {
@@ -153,17 +156,18 @@ storeStates_FP16(
 
 __global__ void
 restoreStates_FP16(
-    __half** storage, float** states, int* sizesX, int* sizesY, int* storeids,
+    __half*** storage, float** states, int* sizesX, int* sizesY, int* storeids,
     int batchStride)
 {
   int stateId = blockIdx.x;
   int batchId = blockIdx.y;
-  int storeId = storeids[batchId];
-  if (storeId < 0)
+  int chunkId = storeids[batchId*2];
+  int storeId = storeids[batchId*2+1];
+  if (chunkId < 0 || storeId < 0)
     return;  // no empty slots
   int sizeX = sizesX[stateId];
   int sizeY = sizesY[stateId];
-  __half* pSrc = storage[stateId] + storeId * sizeX * sizeY;
+  __half* pSrc = storage[chunkId][stateId] + storeId * sizeX * sizeY;
   float* pDst = states[stateId] + batchId * sizeY;
   for (int x = 0; x < sizeX; ++x) {
     for (int i = threadIdx.x; i < sizeY; i += blockDim.x) {
@@ -176,7 +180,7 @@ restoreStates_FP16(
 
 void
 launchRestoreGPUKernel_FP32(
-    float** storage, float** states, int* sizesX, int* sizesY, int numStates,
+    float*** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream)
 {
   dim3 threadsPerBlock(256, 1);
@@ -185,7 +189,7 @@ launchRestoreGPUKernel_FP32(
       storage, states, sizesX, sizesY, storeids, batchStride);
 #ifdef VERBOSE_OUTPUT
   std::cout << "Restoring the instances:" << std::endl;
-  print_device_vector(storeids, batchSize);
+  print_device_vector(storeids, batchSize*2);
   print_device_vector(sizes, numStates);
   print_device_vectors(states, numStates, 2);
 #endif
@@ -193,7 +197,7 @@ launchRestoreGPUKernel_FP32(
 
 void
 launchStoreGPUKernel_FP32(
-    float** storage, float** states, int* sizesX, int* sizesY, int numStates,
+    float*** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream)
 {
   dim3 threadsPerBlock(256, 1);
@@ -202,7 +206,7 @@ launchStoreGPUKernel_FP32(
       storage, states, sizesX, sizesY, storeids, batchStride);
 #ifdef VERBOSE_OUTPUT
   std::cout << "Storing the instances:" << std::endl;
-  print_device_vector(storeids, batchSize);
+  print_device_vector(storeids, batchSize*2);
   print_device_vector(sizes, numStates);
   print_device_vectors(states, numStates, 2);
 #endif
@@ -210,7 +214,7 @@ launchStoreGPUKernel_FP32(
 
 void
 launchRestoreGPUKernel_FP16(
-    __half** storage, float** states, int* sizesX, int* sizesY, int numStates,
+    __half*** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream)
 {
   dim3 threadsPerBlock(256, 1);
@@ -219,7 +223,7 @@ launchRestoreGPUKernel_FP16(
       storage, states, sizesX, sizesY, storeids, batchStride);
 #ifdef VERBOSE_OUTPUT
   std::cout << "Restoring the instances:" << std::endl;
-  print_device_vector(storeids, batchSize);
+  print_device_vector(storeids, batchSize*2);
   print_device_vector(sizes, numStates);
   print_device_vectors(states, numStates, 2);
 #endif
@@ -227,7 +231,7 @@ launchRestoreGPUKernel_FP16(
 
 void
 launchStoreGPUKernel_FP16(
-    __half** storage, float** states, int* sizesX, int* sizesY, int numStates,
+    __half*** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream)
 {
   dim3 threadsPerBlock(256, 1);
@@ -236,7 +240,7 @@ launchStoreGPUKernel_FP16(
       storage, states, sizesX, sizesY, storeids, batchStride);
 #ifdef VERBOSE_OUTPUT
   std::cout << "Storing the instances:" << std::endl;
-  print_device_vector(storeids, batchSize);
+  print_device_vector(storeids, batchSize*2);
   print_device_vector(sizes, numStates);
   print_device_vectors(states, numStates, 2);
 #endif

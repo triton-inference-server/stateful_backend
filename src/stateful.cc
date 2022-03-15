@@ -42,6 +42,13 @@
 
 #include <onnxruntime_cxx_api.h>
 #include "stateful.h"
+#include "response_util.h"
+
+#if (TRITONBACKEND_API_VERSION_MAJOR > 1) || \
+    ((TRITONBACKEND_API_VERSION_MAJOR == 1) && \
+     (TRITONBACKEND_API_VERSION_MINOR >= 6))
+  #define TRITON_SUPPORTS_STRING_CORRID
+#endif
 
 namespace triton { namespace backend { namespace stateful {
 
@@ -105,6 +112,7 @@ class ModelState : public BackendModel {
  public:
   int64_t max_batch_size_;
   int64_t max_sequence_idle_microseconds_;
+  BufferConfig buffer_config_;
   int64_t max_candidate_sequences_;
   std::vector<int64_t> pref_batch_sizes_;
   bool is_corrId_string;
@@ -169,6 +177,19 @@ ModelState::ValidateModelConfig()
   return nullptr;  // success
 }
 
+inline TRITONSERVER_Error*
+GetInt64Parameter(
+  common::TritonJson::Value& parameters, std::string name, int64_t& i64_conf)
+{
+  common::TritonJson::Value buffer_config;
+  std::string buffer_config_str;
+  RETURN_IF_ERROR(
+    parameters.MemberAsObject(name.c_str(), &buffer_config));
+  RETURN_IF_ERROR(
+    buffer_config.MemberAsString("string_value", &buffer_config_str));
+  i64_conf = static_cast<int64_t>(std::stol(buffer_config_str));
+  return nullptr;
+}
 
 // Initialize the model specific variables shared by all instances
 TRITONSERVER_Error*
@@ -232,7 +253,12 @@ ModelState::InitModelState()
   // set default values for configurable parameters
   max_batch_size_ = 64;
   max_sequence_idle_microseconds_ = 100000000;
-  max_candidate_sequences_ = 1280;
+  buffer_config_.max_connections = 1280;
+  buffer_config_.initial_buffer_size = 400;
+  buffer_config_.subsequent_buffer_size = 100;
+  buffer_config_.alloc_threshold = 32;
+  buffer_config_.dealloc_threshold = 150;
+  max_candidate_sequences_ = buffer_config_.max_connections;
   is_corrId_string = false;
   ort_ep_name_ = "trt";
   compute_precision_name_ = "fp16";
@@ -290,9 +316,11 @@ ModelState::InitModelState()
       LOG_MESSAGE(
           TRITONSERVER_LOG_INFO,
           (std::string("CORRID Data Type = ") + control_data_type).c_str());
+#ifdef TRITON_SUPPORTS_STRING_CORRID
       if (control_data_type.compare("TYPE_STRING") == 0) {
         is_corrId_string = true;
       }
+#endif
     }
   }
   IGNORE_ERROR(sequence_batching.MemberAsInt(
@@ -337,6 +365,45 @@ ModelState::InitModelState()
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
       (std::string("onnx file name = ") + onnx_file_name_).c_str());
+
+  buffer_config_.max_connections = max_candidate_sequences_;
+  TRITONSERVER_Error* lazy_err_ = GetInt64Parameter(parameters, "initial_buffer_size",
+      buffer_config_.initial_buffer_size);
+  if (lazy_err_ == nullptr) { // found lazy allocation config
+    RETURN_ERROR_IF_FALSE(
+      buffer_config_.initial_buffer_size >= 0,
+      TRITONSERVER_ERROR_INVALID_ARG,
+      std::string("Invalid value for `initial_buffer_size`"));
+    RETURN_IF_ERROR(GetInt64Parameter(parameters, "subsequent_buffer_size",
+        buffer_config_.subsequent_buffer_size));
+    RETURN_ERROR_IF_FALSE(
+      buffer_config_.subsequent_buffer_size >= 0,
+      TRITONSERVER_ERROR_INVALID_ARG,
+      std::string("Invalid value for `subsequent_buffer_size`"));
+    RETURN_IF_ERROR(GetInt64Parameter(parameters, "buffer_alloc_threshold",
+        buffer_config_.alloc_threshold));
+    RETURN_ERROR_IF_FALSE(
+      buffer_config_.alloc_threshold >= 0,
+      TRITONSERVER_ERROR_INVALID_ARG,
+      std::string("Invalid value for `buffer_alloc_threshold`"));
+    RETURN_IF_ERROR(GetInt64Parameter(parameters, "buffer_dealloc_threshold",
+        buffer_config_.dealloc_threshold));
+    RETURN_ERROR_IF_FALSE(
+      buffer_config_.dealloc_threshold >= 0,
+      TRITONSERVER_ERROR_INVALID_ARG,
+      std::string("Invalid value for `buffer_dealloc_threshold`"));
+  }
+  else { // if lazy alloc config not found, mimic old behavior
+    LOG_MESSAGE(TRITONSERVER_LOG_WARN, TRITONSERVER_ErrorMessage(lazy_err_));
+    TRITONSERVER_ErrorDelete(lazy_err_);
+    buffer_config_.initial_buffer_size = max_candidate_sequences_;
+    buffer_config_.subsequent_buffer_size = max_batch_size_;
+    buffer_config_.alloc_threshold = max_batch_size_;
+    buffer_config_.dealloc_threshold = max_candidate_sequences_;
+  }
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("Buffer Config = ") + buffer_config_.to_string()).c_str());
 
   common::TritonJson::Value ort_ep;
   CHECK_IF_ERROR(parameters.MemberAsObject("ort_ep", &ort_ep), parse_succeeded);
@@ -460,10 +527,7 @@ ModelState::InitModelState()
     IGNORE_ERROR(error_inject_rate.MemberAsString(
         "string_value", &str_error_inject_rate));
   }
-  LOG_MESSAGE(
-      TRITONSERVER_LOG_INFO,
-      (std::string("Error Injection Rate = ") + str_error_inject_rate).c_str());
-  error_inject_rate_ = 0;
+  error_inject_rate_ = 20; // 20% of requests will get random error response
   if (!str_error_inject_rate.empty()) {
     try {
       int64_t r = static_cast<int64_t>(std::stoll(str_error_inject_rate));
@@ -481,6 +545,13 @@ ModelState::InitModelState()
           TRITONSERVER_LOG_WARN, "Invalid value in 'error_inject_rate'.");
     }
   }
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("Error Injection Rate = ") +
+       std::to_string(error_inject_rate_)).c_str());
+  const int rseed = rand()%100;
+  std::cout << "Error Injection Random Seed = " << rseed << std::endl;
+  srand(rseed);
 #endif  // DEBUG_ERROR_INJECT
 
   // Initialize  environment...one environment per process
@@ -763,10 +834,19 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   catch (...) {
     LOG_MESSAGE(
         TRITONSERVER_LOG_WARN,
-        "Invalid value in 'metric_logging_frequency_seconds'.");
+        "Invalid value in 'max_candidate_sequence_use_ratio'.");
   }
-  int64_t max_connection = static_cast<int64_t>(
-      model_state->max_candidate_sequences_ * max_connection_use_ratio);
+  // create a copy of the buffer config so that we don't modify the original
+  BufferConfig buffer_config = model_state->buffer_config_;
+  buffer_config.max_connections = static_cast<int64_t>(
+      buffer_config.max_connections * max_connection_use_ratio);
+  buffer_config.initial_buffer_size =
+    std::min(buffer_config.initial_buffer_size, buffer_config.max_connections);
+
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("Max connectionss in the backend: ") +
+       std::to_string(buffer_config.max_connections)).c_str());
 
   bool pad_to_max_batch = false;
   if (model_state->always_pad_to_max_batch_.compare("1") == 0)
@@ -793,7 +873,7 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   try {
     std::string err_msg = instance_state->trt_onnx_model_->Prepare(
         ss_logs, model_state->mOrtEnv, full_onnx_file_name,
-        model_state->state_pairs_, max_connection, device_id,
+        model_state->state_pairs_, buffer_config, device_id,
         model_state->pref_batch_sizes_, model_state->input_tensors_,
         model_state->output_tensors_, model_state->start_tensor_name_, useTrtEp,
         useFp16, store_states_as_fp16, pad_to_max_batch, enable_trt_caching,
@@ -944,10 +1024,12 @@ TRITONBACKEND_ModelInstanceExecute(
       correlation_id = std::to_string(u64_correlation_id);
     } else {
       const char* str_correlation_id = "";
+#ifdef TRITON_SUPPORTS_STRING_CORRID
       GUARDED_RESPOND_IF_ERROR(
           responses, r,
           TRITONBACKEND_RequestCorrelationIdString(
               request, &str_correlation_id));
+#endif
       correlation_id = std::string(str_correlation_id);
     }
 
@@ -1058,7 +1140,9 @@ TRITONBACKEND_ModelInstanceExecute(
     }
 #ifdef DEBUG_ERROR_INJECT
     // inject error before calling InferTasks()
-    if ((rand() % 100) < model_state->error_inject_rate_) {
+    std::cerr << "Injecting error for # " << request_id << std::endl;
+    // TODO: don't send error for last segment until Triton fixes bug
+    if (input_end == 0 && (rand() % 100) < model_state->error_inject_rate_) {
       instance_state->inference_tasks_[r].err_msg = "RANDOM ERROR";
     }
 #endif  // DEBUG_ERROR_INJECT
@@ -1066,12 +1150,16 @@ TRITONBACKEND_ModelInstanceExecute(
 
   uint64_t comp_start_ns = 0, comp_end_ns = 0;
 
+  const bool send_response_early = true;
+  void* vp_responses = send_response_early ?
+              reinterpret_cast<void*>(responses.data()) : nullptr;
   std::string err_msg;
   try {
     // Now that we set all input / output, we can do the inferencing
     std::stringstream ss_logs;
     err_msg = instance_state->trt_onnx_model_->InferTasks(
-        ss_logs, instance_state->inference_tasks_, request_count, comp_start_ns,
+        ss_logs, instance_state->inference_tasks_, request_count,
+        vp_responses, comp_start_ns,
         comp_end_ns);
 
     std::string str_logs = ss_logs.str();
@@ -1127,25 +1215,14 @@ TRITONBACKEND_ModelInstanceExecute(
     return nullptr;
   }
 
+  if (!send_response_early) {
+    // Send the responses
+    triton::backend::stateful::utils::SendResponses(
+      instance_state->inference_tasks_, request_count,
+      reinterpret_cast<void*>(responses.data()));
+  }
 
   for (uint32_t r = 0; r < request_count; ++r) {
-    // If we get to this point then there hasn't been any error for the whole
-    // batch and the response is complete (error or not) and we can send it.
-    // This is the last (and only) response that we are sending for the request
-    // so we must mark it FINAL. If there is an error when sending all we can do
-    // is log it.
-    TRITONSERVER_Error* err = nullptr;                           // success
-    if (!instance_state->inference_tasks_[r].err_msg.empty()) {  // error
-      err = TRITONSERVER_ErrorNew(
-          TRITONSERVER_ERROR_INTERNAL,
-          instance_state->inference_tasks_[r].err_msg.c_str());
-      instance_state->inference_tasks_[r]
-          .err_msg.clear();  // clear the error for next time
-    }
-    LOG_IF_ERROR(
-        TRITONBACKEND_ResponseSend(
-            responses[r], TRITONSERVER_RESPONSE_COMPLETE_FINAL, err),
-        "failed sending response");
 
     // Done with requests...
     //
@@ -1160,20 +1237,19 @@ TRITONBACKEND_ModelInstanceExecute(
     LOG_IF_ERROR(
         TRITONBACKEND_ModelInstanceReportStatistics(
             instance_state->TritonModelInstance(), request,
-            (responses[r] != nullptr && err == nullptr) /* success */,
+            (responses[r] != nullptr &&
+             instance_state->inference_tasks_[r].err_msg.empty()) /* success */,
             exec_start_ns, comp_start_ns, comp_end_ns, exec_end_ns),
         "failed reporting request statistics");
+
+    // clear any error for next time
+    instance_state->inference_tasks_[r].err_msg.clear();
 
     // NOTE: Whether there was an error for individual requests or not,
     // once we send the response, we need to release the request.
     LOG_IF_ERROR(
         TRITONBACKEND_RequestRelease(request, TRITONSERVER_REQUEST_RELEASE_ALL),
         "failed releasing request");
-
-    // Now delete the Error object
-    if (err != nullptr) {
-      TRITONSERVER_ErrorDelete(err);
-    }
   }
 
   // Report the entire batch statistics.
