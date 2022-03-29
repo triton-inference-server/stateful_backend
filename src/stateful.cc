@@ -91,6 +91,19 @@ namespace triton { namespace backend { namespace stateful {
 // enable this to test error handling client
 // #define DEBUG_ERROR_INJECT
 
+
+// BackendState
+// All the states/configs associated with the Stateful Backend.
+struct BackendState {
+  BackendState()
+      : m_OrtLoggingLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING),
+        mOrtEnv(nullptr)
+  {
+  }
+  OrtLoggingLevel m_OrtLoggingLevel;
+  std::shared_ptr<Ort::Env> mOrtEnv;
+};
+
 //
 // ModelState
 //
@@ -136,7 +149,7 @@ class ModelState : public BackendModel {
 
   std::string start_tensor_name_;
   std::string end_tensor_name_;
-  std::shared_ptr<Ort::Env> mOrtEnv;
+  BackendState* backend_state_;
 
 
  private:
@@ -161,6 +174,13 @@ ModelState::Create(TRITONBACKEND_Model* triton_model, ModelState** state)
 ModelState::ModelState(TRITONBACKEND_Model* triton_model)
     : BackendModel(triton_model)
 {
+  // Obtain backend state
+  TRITONBACKEND_Backend* backend;
+  THROW_IF_BACKEND_MODEL_ERROR(
+      TRITONBACKEND_ModelBackend(triton_model, &backend));
+  void* vstate;
+  THROW_IF_BACKEND_MODEL_ERROR(TRITONBACKEND_BackendState(backend, &vstate));
+  backend_state_ = reinterpret_cast<BackendState*>(vstate);
 }
 
 TRITONSERVER_Error*
@@ -554,13 +574,6 @@ ModelState::InitModelState()
   srand(rseed);
 #endif  // DEBUG_ERROR_INJECT
 
-  // Initialize  environment...one environment per process
-  // Environment maintains thread pools and other state info
-  // TODO: Use only one environment for all model instances within a server
-  auto ort_log_level = logging_level_ > 0 ? ORT_LOGGING_LEVEL_VERBOSE
-                                          : ORT_LOGGING_LEVEL_WARNING;
-  mOrtEnv.reset(new Ort::Env(ort_log_level, "ONNX Stateful Model"));
-
   return nullptr;  // success
 }
 
@@ -618,6 +631,30 @@ ModelInstanceState::ModelInstanceState(
 {
 }
 
+inline OrtLoggingLevel Int2OrtLoggingLevel(const int l) {
+  switch (l)
+  {
+  case static_cast<int>(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE):
+    return OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE;
+    break;
+  case static_cast<int>(OrtLoggingLevel::ORT_LOGGING_LEVEL_INFO):
+    return OrtLoggingLevel::ORT_LOGGING_LEVEL_INFO;
+    break;
+  case static_cast<int>(OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING):
+    return OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING;
+    break;
+  case static_cast<int>(OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR):
+    return OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR;
+    break;
+  case static_cast<int>(OrtLoggingLevel::ORT_LOGGING_LEVEL_FATAL):
+    return OrtLoggingLevel::ORT_LOGGING_LEVEL_FATAL;
+    break;
+
+  default:
+    return OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING;
+  }
+}
+
 /////////////
 
 extern "C" {
@@ -663,8 +700,7 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
   }
 
   // The backend configuration may contain information needed by the
-  // backend, such a command-line arguments. This backend doesn't use
-  // any such configuration but we print whatever is available.
+  // backend, such a command-line arguments.
   TRITONSERVER_Message* backend_config_message;
   RETURN_IF_ERROR(
       TRITONBACKEND_BackendConfig(backend, &backend_config_message));
@@ -677,6 +713,50 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
       TRITONSERVER_LOG_INFO,
       (std::string("backend configuration:\n") + buffer).c_str());
 
+  triton::common::TritonJson::Value backend_config;
+  if (byte_size != 0) {
+    RETURN_IF_ERROR(backend_config.Parse(buffer, byte_size));
+  }
+
+  std::unique_ptr<BackendState>
+        backend_state(new BackendState());
+  triton::common::TritonJson::Value cmdline;
+  if (backend_config.Find("cmdline", &cmdline)) {
+    triton::common::TritonJson::Value value;
+    std::string value_str;
+    int value_int;
+    if (cmdline.Find("ort-logging-level", &value)) {
+      RETURN_IF_ERROR(value.AsString(&value_str));
+      RETURN_IF_ERROR(ParseIntValue(value_str, &value_int));
+    }
+    backend_state->m_OrtLoggingLevel = Int2OrtLoggingLevel(value_int);
+  }
+
+  // Initialize  environment...one environment per process
+  // Environment maintains thread pools and other state info
+  if (backend_state->mOrtEnv == nullptr) {
+    backend_state->mOrtEnv.reset(
+      new Ort::Env(backend_state->m_OrtLoggingLevel, "Stateful Backend"));
+  }
+  // save the backend state to Triton, used by ModelState/ModelInstanceState
+  RETURN_IF_ERROR(TRITONBACKEND_BackendSetState(
+      backend, reinterpret_cast<void*>(backend_state.get())));
+
+  backend_state.release(); // saved the state in Triton, so release local ptr
+
+  return nullptr;  // success
+}
+
+// Implementing TRITONBACKEND_Finalize is optional unless state is set
+// using TRITONBACKEND_BackendSetState. The backend must free this
+// state and perform any other global cleanup.
+TRITONSERVER_Error*
+TRITONBACKEND_Finalize(TRITONBACKEND_Backend* backend)
+{
+  void* vstate;
+  RETURN_IF_ERROR(TRITONBACKEND_BackendState(backend, &vstate));
+  auto backend_state = reinterpret_cast<BackendState*>(vstate);
+  delete backend_state;
   return nullptr;  // success
 }
 
@@ -872,7 +952,7 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   std::stringstream ss_logs;
   try {
     std::string err_msg = instance_state->trt_onnx_model_->Prepare(
-        ss_logs, model_state->mOrtEnv, full_onnx_file_name,
+        ss_logs, model_state->backend_state_->mOrtEnv, full_onnx_file_name,
         model_state->state_pairs_, buffer_config, device_id,
         model_state->pref_batch_sizes_, model_state->input_tensors_,
         model_state->output_tensors_, model_state->start_tensor_name_, useTrtEp,
