@@ -731,6 +731,10 @@ TRITONBACKEND_Initialize(TRITONBACKEND_Backend* backend)
     }
     backend_state->m_OrtLoggingLevel = Int2OrtLoggingLevel(value_int);
   }
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("ORT Logging Level: ") +
+       std::to_string(backend_state->m_OrtLoggingLevel)).c_str());
 
   // Initialize  environment...one environment per process
   // Environment maintains thread pools and other state info
