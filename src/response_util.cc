@@ -20,9 +20,33 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#include "stateful.h"
 #include "response_util.h"
 
 namespace triton { namespace backend { namespace stateful { namespace utils {
+
+void
+SendSingleEmptyResponse(
+  TRITONBACKEND_Response* response,
+  std::vector<TritonTensorInfo>& output_tensors)
+{
+  std::vector<int64_t> zero_shape({0});
+  for (auto& output_tensor : output_tensors) {
+    TRITONBACKEND_Output* output;
+    GUARDED_RESPOND_IF_ERROR_INTERNAL(
+        response,
+        TRITONBACKEND_ResponseOutput(
+            response, &output, output_tensor.name.c_str(),
+            TRITONSERVER_TYPE_FP32, zero_shape.data(),
+            zero_shape.size()));
+  }
+  if (response != nullptr) {
+    LOG_IF_ERROR(
+        TRITONBACKEND_ResponseSend(
+            response, TRITONSERVER_RESPONSE_COMPLETE_FINAL, nullptr),
+        "failed sending response");
+  }
+}
 
 TRITONSERVER_Error*
 SendSingleResponse(

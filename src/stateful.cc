@@ -43,6 +43,7 @@
 #include <onnxruntime_cxx_api.h>
 #include "stateful.h"
 #include "response_util.h"
+#include "request_util.h"
 
 #if (TRITONBACKEND_API_VERSION_MAJOR > 1) || \
     ((TRITONBACKEND_API_VERSION_MAJOR == 1) && \
@@ -52,6 +53,29 @@
 
 namespace triton { namespace backend { namespace stateful {
 
+namespace utils {
+
+TRITONSERVER_Error*
+InitTritonTensorInfo(
+    common::TritonJson::Value& tensor_values,
+    std::vector<TritonTensorInfo>& tensor_infos, std::string& log)
+{
+  for (size_t i = 0; i < tensor_values.ArraySize(); ++i) {
+    TritonTensorInfo triton_tensor;
+    common::TritonJson::Value tensor;
+    RETURN_IF_ERROR(tensor_values.IndexAsObject(i, &tensor));
+    RETURN_IF_ERROR(tensor.MemberAsString("data_type", &triton_tensor.type));
+    RETURN_IF_ERROR(tensor.MemberAsString("name", &triton_tensor.name));
+    RETURN_IF_ERROR(backend::ParseShape(tensor, "dims", &triton_tensor.shape));
+    triton_tensor.idx = i;
+    log = triton_tensor.Init();
+    tensor_infos.push_back(triton_tensor);
+  }
+
+  return nullptr;  // success
+}
+}
+
 //
 // Simple backend that demonstrates the TRITONBACKEND API for a
 // blocking backend with state tensors for sequence models.
@@ -60,22 +84,6 @@ namespace triton { namespace backend { namespace stateful {
 // The model must store the values to initialize the state tensors
 // when new sequence starts.
 //
-
-#define GUARDED_RESPOND_IF_ERROR(RESPONSES, IDX, X)                     \
-  do {                                                                  \
-    if ((RESPONSES)[IDX] != nullptr) {                                  \
-      TRITONSERVER_Error* err__ = (X);                                  \
-      if (err__ != nullptr) {                                           \
-        LOG_IF_ERROR(                                                   \
-            TRITONBACKEND_ResponseSend(                                 \
-                (RESPONSES)[IDX], TRITONSERVER_RESPONSE_COMPLETE_FINAL, \
-                err__),                                                 \
-            "failed to send error response");                           \
-        (RESPONSES)[IDX] = nullptr;                                     \
-        TRITONSERVER_ErrorDelete(err__);                                \
-      }                                                                 \
-    }                                                                   \
-  } while (false)
 
 #define CHECK_IF_ERROR(X, success_)  \
   do {                               \
@@ -90,71 +98,6 @@ namespace triton { namespace backend { namespace stateful {
 
 // enable this to test error handling client
 // #define DEBUG_ERROR_INJECT
-
-
-// BackendState
-// All the states/configs associated with the Stateful Backend.
-struct BackendState {
-  BackendState()
-      : m_OrtLoggingLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING),
-        mOrtEnv(nullptr)
-  {
-  }
-  OrtLoggingLevel m_OrtLoggingLevel;
-  std::shared_ptr<Ort::Env> mOrtEnv;
-};
-
-//
-// ModelState
-//
-// State associated with a model that is using this backend. An object
-// of this class is created and associated with each
-// TRITONBACKEND_Model.
-//
-class ModelState : public BackendModel {
- public:
-  static TRITONSERVER_Error* Create(
-      TRITONBACKEND_Model* triton_model, ModelState** state);
-  virtual ~ModelState() = default;
-
-  TRITONSERVER_Error* InitModelState();
-
-  // Validate that model configuration is supported by this backend.
-  TRITONSERVER_Error* ValidateModelConfig();
-
- public:
-  int64_t max_batch_size_;
-  int64_t max_sequence_idle_microseconds_;
-  BufferConfig buffer_config_;
-  int64_t max_candidate_sequences_;
-  std::vector<int64_t> pref_batch_sizes_;
-  bool is_corrId_string;
-
-  std::string path_;
-  std::string onnx_file_name_;
-  std::string ort_ep_name_;
-  std::string compute_precision_name_;
-  std::string store_states_as_fp16_;
-  std::string state_pairs_;
-  std::string max_candidate_sequence_use_ratio_;
-  int64_t logging_level_;
-  std::string metric_logging_frequency_seconds_;
-  std::string enable_trt_caching_;
-  std::string trt_cache_dir_;
-  std::string always_pad_to_max_batch_;
-  int64_t error_inject_rate_;
-
-  std::vector<TritonTensorInfo> input_tensors_;
-  std::vector<TritonTensorInfo> output_tensors_;
-
-  std::string start_tensor_name_;
-  std::string end_tensor_name_;
-  BackendState* backend_state_;
-
-
- private:
-  ModelState(TRITONBACKEND_Model* triton_model);
-};
 
 TRITONSERVER_Error*
 ModelState::Create(TRITONBACKEND_Model* triton_model, ModelState** state)
@@ -279,7 +222,8 @@ ModelState::InitModelState()
   buffer_config_.alloc_threshold = 32;
   buffer_config_.dealloc_threshold = 150;
   max_candidate_sequences_ = buffer_config_.max_connections;
-  is_corrId_string = false;
+  is_corrId_string_ = false;
+  infer_end_requests_ = true;
   ort_ep_name_ = "trt";
   compute_precision_name_ = "fp16";
   store_states_as_fp16_ = "0";
@@ -338,7 +282,7 @@ ModelState::InitModelState()
           (std::string("CORRID Data Type = ") + control_data_type).c_str());
 #ifdef TRITON_SUPPORTS_STRING_CORRID
       if (control_data_type.compare("TYPE_STRING") == 0) {
-        is_corrId_string = true;
+        is_corrId_string_ = true;
       }
 #endif
     }
@@ -387,8 +331,8 @@ ModelState::InitModelState()
       (std::string("onnx file name = ") + onnx_file_name_).c_str());
 
   buffer_config_.max_connections = max_candidate_sequences_;
-  TRITONSERVER_Error* lazy_err_ = GetInt64Parameter(parameters, "initial_buffer_size",
-      buffer_config_.initial_buffer_size);
+  TRITONSERVER_Error* lazy_err_ = GetInt64Parameter(parameters,
+     "initial_buffer_size", buffer_config_.initial_buffer_size);
   if (lazy_err_ == nullptr) { // found lazy allocation config
     RETURN_ERROR_IF_FALSE(
       buffer_config_.initial_buffer_size >= 0,
@@ -513,6 +457,24 @@ ModelState::InitModelState()
       (std::string("Always Pad to Max Batch = ") + always_pad_to_max_batch_)
           .c_str());
 
+  common::TritonJson::Value infer_end_requests;
+  CHECK_IF_ERROR(
+      parameters.MemberAsObject(
+          "infer_end_requests", &infer_end_requests),
+      parse_succeeded);
+  if (parse_succeeded) {
+    std::string str_infer_end_requests;
+    IGNORE_ERROR(infer_end_requests.MemberAsString(
+        "string_value", &str_infer_end_requests));
+    if (str_infer_end_requests.compare("0") == 0) {
+      infer_end_requests_ = false;
+    }
+  }
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("Infer End-requests = ") +
+       std::to_string(infer_end_requests_)).c_str());
+
   common::TritonJson::Value enable_trt_caching;
   CHECK_IF_ERROR(
       parameters.MemberAsObject("enable_trt_caching", &enable_trt_caching),
@@ -577,36 +539,6 @@ ModelState::InitModelState()
   return nullptr;  // success
 }
 
-
-//
-// ModelInstanceState
-//
-// State associated with a model instance. An object of this class is
-// created and associated with each TRITONBACKEND_ModelInstance.
-//
-class ModelInstanceState : public BackendModelInstance {
- public:
-  static TRITONSERVER_Error* Create(
-      ModelState* model_state,
-      TRITONBACKEND_ModelInstance* triton_model_instance,
-      ModelInstanceState** state);
-  virtual ~ModelInstanceState() = default;
-
-  // Get the state of the model that corresponds to this instance.
-  ModelState* StateForModel() const { return model_state_; }
-
- public:
-  std::unique_ptr<TrtOnnxModel> trt_onnx_model_;
-  std::vector<InferenceTask> inference_tasks_;
-
- private:
-  ModelInstanceState(
-      ModelState* model_state,
-      TRITONBACKEND_ModelInstance* triton_model_instance);
-
-  ModelState* model_state_;
-};
-
 TRITONSERVER_Error*
 ModelInstanceState::Create(
     ModelState* model_state, TRITONBACKEND_ModelInstance* triton_model_instance,
@@ -631,6 +563,10 @@ ModelInstanceState::ModelInstanceState(
 {
 }
 
+/**
+ * Casting the int value to enum.
+ * static_cast behavior can be undefined if the int value is out-of-range.
+ */
 inline OrtLoggingLevel Int2OrtLoggingLevel(const int l) {
   switch (l)
   {
@@ -1085,152 +1021,26 @@ TRITONBACKEND_ModelInstanceExecute(
   // go wrong in processing a particular request then we send an error
   // response just for the specific request.
 
-  for (uint32_t r = 0; r < request_count; ++r) {
-    TRITONBACKEND_Request* request = requests[r];
+  // Pre-process the requests
+  uint32_t infer_request_count = request_count;
+  uint32_t end_request_count = 0;
+  utils::PreProcessRequests(requests, instance_state->inference_tasks_,
+                            request_count, responses, infer_request_count,
+                            end_request_count, instance_state);
 
-    const char* request_id = "";
-    GUARDED_RESPOND_IF_ERROR(
-        responses, r, TRITONBACKEND_RequestId(request, &request_id));
-
-    /**
-     * TODO:
-     *  Managing only string sequence ids in the backend for now.
-     *  UINT64 sequence ids are also converted to string for convenience.
-     *  Once the InferenceRequest::SequenceId class is in common repo,
-     *  we can reuse that implementation.
-     */
-    std::string correlation_id;
-    if (!model_state->is_corrId_string) {
-      uint64_t u64_correlation_id = 0;
-      GUARDED_RESPOND_IF_ERROR(
-          responses, r,
-          TRITONBACKEND_RequestCorrelationId(request, &u64_correlation_id));
-      correlation_id = std::to_string(u64_correlation_id);
-    } else {
-      const char* str_correlation_id = "";
-#ifdef TRITON_SUPPORTS_STRING_CORRID
-      GUARDED_RESPOND_IF_ERROR(
-          responses, r,
-          TRITONBACKEND_RequestCorrelationIdString(
-              request, &str_correlation_id));
-#endif
-      correlation_id = std::string(str_correlation_id);
-    }
-
-    TRITONBACKEND_Input* input = nullptr;
-    TRITONSERVER_MemoryType input_memory_type = TRITONSERVER_MEMORY_CPU;
-    int64_t input_memory_type_id = 0;
-    uint64_t buffer_byte_size = 0;
-    const void* input_buffer = nullptr;
-
-    GUARDED_RESPOND_IF_ERROR(
-        responses, r,
-        TRITONBACKEND_RequestInput(
-            request, model_state->start_tensor_name_.c_str(), &input));
-    GUARDED_RESPOND_IF_ERROR(
-        responses, r,
-        TRITONBACKEND_InputBuffer(
-            input, 0, &input_buffer, &buffer_byte_size, &input_memory_type,
-            &input_memory_type_id));
-    int input_start = *reinterpret_cast<const int*>(input_buffer);
-
-    GUARDED_RESPOND_IF_ERROR(
-        responses, r,
-        TRITONBACKEND_RequestInput(
-            request, model_state->end_tensor_name_.c_str(), &input));
-    GUARDED_RESPOND_IF_ERROR(
-        responses, r,
-        TRITONBACKEND_InputBuffer(
-            input, 0, &input_buffer, &buffer_byte_size, &input_memory_type,
-            &input_memory_type_id));
-    int input_end = *reinterpret_cast<const int*>(input_buffer);
-
-    int i_tensor = 0;
-    for (auto& input_tensor : model_state->input_tensors_) {
-      GUARDED_RESPOND_IF_ERROR(
-          responses, r,
-          TRITONBACKEND_RequestInput(
-              request, input_tensor.name.c_str(), &input));
-      GUARDED_RESPOND_IF_ERROR(
-          responses, r,
-          TRITONBACKEND_InputBuffer(
-              input, 0, &input_buffer, &buffer_byte_size, &input_memory_type,
-              &input_memory_type_id));
-      instance_state->inference_tasks_[r].mInput[i_tensor++] = input_buffer;
-    }
-
-    instance_state->inference_tasks_[r].mCorrId = correlation_id;
-    instance_state->inference_tasks_[r].mStart = input_start;
-    instance_state->inference_tasks_[r].mEnd = input_end;
-
-#ifdef VERBOSE_LOG
-    std::cout << "Request Inputs: "
-              << instance_state->inference_tasks_[r].mStart << ", ";
-    std::cout << instance_state->inference_tasks_[r].mEnd << ", ";
-    std::cout << instance_state->inference_tasks_[r].mCorrId << ", ";
-    std::cout << buffer_byte_size << ",";
-    std::cout << std::endl;
-#endif
-
-    i_tensor = 0;
-    for (auto& output_tensor : model_state->output_tensors_) {
-      TRITONBACKEND_Output* output;
-      TRITONBACKEND_Response* response = responses[r];
-      GUARDED_RESPOND_IF_ERROR(
-          responses, r,
-          TRITONBACKEND_ResponseOutput(
-              response, &output, output_tensor.name.c_str(),
-              TRITONSERVER_TYPE_FP32, output_tensor.shape.data(),
-              output_tensor.shape.size()));
-      if (responses[r] == nullptr) {
-        LOG_MESSAGE(
-            TRITONSERVER_LOG_ERROR,
-            (std::string("request ") + std::to_string(r) +
-             ": failed to create response output, error response sent")
-                .c_str());
-        continue;
-      }
-
-      // Step 2. Get the output buffer. We request a buffer in CPU
-      // memory but we have to handle any returned type. If we get
-      // back a buffer in GPU memory we just fail the request.
-      void* output_buffer;
-      TRITONSERVER_MemoryType output_memory_type = TRITONSERVER_MEMORY_CPU;
-      int64_t output_memory_type_id = 0;
-      size_t output_byte_size = output_tensor.type_size * output_tensor.vol;
-      GUARDED_RESPOND_IF_ERROR(
-          responses, r,
-          TRITONBACKEND_OutputBuffer(
-              output, &output_buffer, output_byte_size, &output_memory_type,
-              &output_memory_type_id));
-
-      if ((response == nullptr) ||
-          (output_memory_type == TRITONSERVER_MEMORY_GPU)) {
-        GUARDED_RESPOND_IF_ERROR(
-            responses, r,
-            TRITONSERVER_ErrorNew(
-                TRITONSERVER_ERROR_UNSUPPORTED,
-                "failed to create output buffer in CPU memory"));
-        LOG_MESSAGE(
-            TRITONSERVER_LOG_ERROR,
-            (std::string("request ") + std::to_string(r) +
-             ": failed to create output buffer in CPU memory, error response "
-             "sent")
-                .c_str());
-        continue;
-      }
-
-      instance_state->inference_tasks_[r].mOutput[i_tensor++] = output_buffer;
-    }
 #ifdef DEBUG_ERROR_INJECT
+  for (uint32_t r = 0; r < infer_request_count; ++r) {
     // inject error before calling InferTasks()
     std::cerr << "Injecting error for # " << request_id << std::endl;
-    // TODO: don't send error for last segment until Triton fixes bug
+    // TODO: don't send error for last segment until Triton fixes bug(?)
     if (input_end == 0 && (rand() % 100) < model_state->error_inject_rate_) {
       instance_state->inference_tasks_[r].err_msg = "RANDOM ERROR";
     }
-#endif  // DEBUG_ERROR_INJECT
   }
+#endif  // DEBUG_ERROR_INJECT
+
+  // From here on out, process only the requests that need inference
+  // until responses are sent for them.
 
   uint64_t comp_start_ns = 0, comp_end_ns = 0;
 
@@ -1242,7 +1052,7 @@ TRITONBACKEND_ModelInstanceExecute(
     // Now that we set all input / output, we can do the inferencing
     std::stringstream ss_logs;
     err_msg = instance_state->trt_onnx_model_->InferTasks(
-        ss_logs, instance_state->inference_tasks_, request_count,
+        ss_logs, instance_state->inference_tasks_, infer_request_count,
         vp_responses, comp_start_ns,
         comp_end_ns);
 
@@ -1285,10 +1095,14 @@ TRITONBACKEND_ModelInstanceExecute(
            for the particular requests. See next section.
     */
     for (uint32_t r = 0; r < request_count; ++r) {
-      LOG_IF_ERROR(
-          TRITONBACKEND_ResponseSend(
-              responses[r], TRITONSERVER_RESPONSE_COMPLETE_FINAL, error),
-          "failed to send error response");
+      // No need to send a response if we already sent one e.g.
+      // empty response for end requests that didn't need inference
+      if (responses[r] != nullptr) {
+        LOG_IF_ERROR(
+            TRITONBACKEND_ResponseSend(
+                responses[r], TRITONSERVER_RESPONSE_COMPLETE_FINAL, error),
+            "failed to send error response");
+      }
 
       TRITONBACKEND_Request* request = requests[r];
       LOG_IF_ERROR(
@@ -1302,10 +1116,11 @@ TRITONBACKEND_ModelInstanceExecute(
   if (!send_response_early) {
     // Send the responses
     triton::backend::stateful::utils::SendResponses(
-      instance_state->inference_tasks_, request_count,
+      instance_state->inference_tasks_, infer_request_count,
       reinterpret_cast<void*>(responses.data()));
   }
 
+  // post-process the original batch
   for (uint32_t r = 0; r < request_count; ++r) {
 
     // Done with requests...

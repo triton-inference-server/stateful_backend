@@ -385,6 +385,8 @@ class TrtOnnxModel {
     mLogResetSequence = enableLogging;
   }
 
+  void clearStates(const std::string& corrId);
+
 #ifndef BUILD_GBENCH
  private:
 #endif

@@ -23,29 +23,23 @@
 #pragma once
 
 #include <vector>
-#include "onnx_model_runner.h"
 
 #include "triton/backend/backend_common.h"
 #include "triton/core/tritonbackend.h"
+#include "stateful.h"
+#include "onnx_model_runner.h"
 
 
 namespace triton { namespace backend { namespace stateful { namespace utils {
 
 void
-SendSingleEmptyResponse(
-  TRITONBACKEND_Response* response,
-  std::vector<TritonTensorInfo>& output_tensors);
-
-TRITONSERVER_Error*
-SendSingleResponse(
-  InferenceTask& task,
-  uint32_t ridx,
-  void* vresponses);
-
-TRITONSERVER_Error*
-SendResponses(
+PreProcessRequests(
+  TRITONBACKEND_Request** requests,
   std::vector<InferenceTask>& inference_tasks_,
-  uint32_t request_count,
-  void* vresponses);
+  const uint32_t request_count,
+  std::vector<TRITONBACKEND_Response*>& responses,
+  uint32_t& true_request_count,
+  uint32_t& end_request_count,
+  ModelInstanceState* model_instance_state);
 
 }}}}

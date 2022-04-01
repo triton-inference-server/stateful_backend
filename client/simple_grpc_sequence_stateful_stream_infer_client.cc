@@ -258,9 +258,17 @@ main(int argc, char** argv)
       StreamSend(
           client, model_name, input_data[seq_idx][seg_idx].data(),
           seq_idx + sequence_id_offset, seg_idx == 0,
+          // false, seg_idx); // to test infer_end_request=0 case
           seg_idx == (NUM_SEGMENT - 1), seg_idx);
     }
   }
+  // NOTE: This block is needed for infer_end_request=0 case
+  // for (int seq_idx = 0; seq_idx < NUM_SEQUENCE; ++seq_idx) {
+  //   StreamSend(
+  //       client, model_name, input_data[seq_idx][0].data(),
+  //       seq_idx + sequence_id_offset, false,
+  //       true, NUM_SEGMENT);
+  // }
 
   // wait for all the requests to be done
   if (stream_timeout == 0) {

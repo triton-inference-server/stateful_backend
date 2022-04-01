@@ -83,14 +83,14 @@ configure_file(src/libtriton_stateful.ldscript libtriton_stateful.ldscript COPYO
 if (WITH_CUSTOM_ORT)
   # Move the ORT Libraries to the build directory
   message("Setting up for custom ORT image ...")
-  file(COPY /workspace/onnxruntime/build/Linux/Release/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/ort-lib)
+  file(COPY /workspace/onnxruntime/install/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/custom-ort)
   set(ORT_INC_DIRS
-    /workspace/onnxruntime/include/onnxruntime/core/session
-    /workspace/onnxruntime/include/onnxruntime/core/providers/tensorrt
-    /workspace/onnxruntime/include/onnxruntime/core/providers/cuda
+    ${CMAKE_CURRENT_BINARY_DIR}/custom-ort/include/onnxruntime/core/session
+    ${CMAKE_CURRENT_BINARY_DIR}/custom-ort/include/onnxruntime/core/providers/tensorrt
+    ${CMAKE_CURRENT_BINARY_DIR}/custom-ort/include/onnxruntime/core/providers/cuda
   )
   set(ORT_LIB_DIRS
-    ${CMAKE_CURRENT_BINARY_DIR}/ort-lib
+    ${CMAKE_CURRENT_BINARY_DIR}/custom-ort/lib
   )
 else()
   message("Setting up for stock TRT image ...")
@@ -108,6 +108,7 @@ add_library(
   triton-stateful-backend SHARED
   src/stateful.cc
   src/onnx_model_runner.cc
+  src/request_util.cc
   src/response_util.cc
   src/cuda_kernels.cu
   ${TRT_SAMPLE_PATH}/common/logger.cpp

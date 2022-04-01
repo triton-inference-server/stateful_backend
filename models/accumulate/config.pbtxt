@@ -152,6 +152,14 @@ parameters [
     value: { string_value: "/tmp/trt_cache" }
   },
   {
+    key: "infer_end_requests"
+    # Whether to run inference on requests with end-signal or not
+    #  1 : Treat the end requests like any other and run inference
+    #  0 : Do not run inference, only send an OK response with 0-shaped data
+    #  Default: 1
+    value: { string_value: "1" }
+  },
+  {
     key: "logging_level"
     # Metrics report logging::
     #  NONE: No logs from model runner.

@@ -111,7 +111,7 @@ Run:
 ```
 python3 scripts/test.py
 ```
-It will build the backend, start the tritonserver with the backend, run a simple client with the accumulate model.
+It will build the backend, start the tritonserver with the backend, run a simple client with the `accumulate` model.
 
 ## Example Triton model 
 models/accumulate folder contains a simple Triton model with state tensors and
@@ -134,6 +134,25 @@ to serve similar stateful ONNX models.
 * `compute_precision` model config parameter to specify the precision (`fp32` or `fp16`). `fp16` is only supported for ORT `trt` EP.
 * `always_pad_to_max_batch` model config parameter to specify whether the batch dimension should be padded to max batch size for model execution (set value to `1`)
 * `store_states_as_fp16` model config paramter to specify whether the internal states are stored as FP16 to reduce memory consumption (set value to `1`). However, it may impact the result accuracy.
+* `metric_logging_frequency_seconds` controls how frequently the backend logs the inference statistics. Default is `0` to disable such logs.
+* `enable_trt_caching` and `trt_cache_dir` to control the engine caching from TRT. The default values are `0` (disabled) and `/tmp` respectively.
+* `logging_level` controls the level of details in the backend's model runner logs. Possible values are `NONE`, `INFO` and `VERBOSE`. Default is `INFO`.
+* `max_candidate_sequence_use_ratio` controls whether the number of maximum simultaneous sequences should less than what Triton uses 
+i.e. `max_candidate_sequences`. The ratio can be used to enable prompt error handling in the backend for overloaded servers. Default value for this is `0.9`. 
+* `infer_end_requests` controls whether to run inference on requests with `end` signal. If specified as `0`, the backend will not run inference 
+for such requests, release the state buffers for those sequences and send successful response with empty output. Default value is `1`.
+* Lazy allocation of the states buffer can be enabled and configured using 4 additional parameters: `initial_buffer_size`, `subsequent_buffer_size`, 
+`buffer_alloc_threshold`, and `buffer_dealloc_threshold`. By default, the lazy allocation feature is disabled and the backend allocates 
+the whole buffer during the model loading for the `max_candidate_sequences` simultaneous sequences. If `initial_buffer_size` is present in the
+model config, the other 3 configs must be present as well and the backend only allocates the buffer for the `initial_buffer_size` sequences during loading.
+Once the number of free slots reach below the `buffer_alloc_threshold`, it will create a new buffer of size `subsequent_buffer_size`. On the other hand, 
+when the number of free slots reach above the `buffer_dealloc_threshold` and the number of allocated buffers are more than 1 (including the initial buffer), 
+it will deallocate only the last buffer if it isn't storing states for any active sequences i.e. all the slots of this buffer are free. 
+Refer to the [code](https://github.com/triton-inference-server/stateful_backend/blob/201df524a08e9c5410772eb7e742573e56846c7a/src/onnx_model_runner.cc#L192) 
+for any more restrictions on these parameters.
+* ORT Environment is created during the backend initialization so that multiple models can share the same environment. To control the ORT logging level, 
+you can pass a command line argument when starting Triton, e.g. `tritonserver --model-repository <model dir> --backend-config=stateful,ort-logging-level=3` 
+will set the ORT logging level to `ORT_LOGGING_LEVEL_ERROR`. Refer to [this](https://github.com/microsoft/onnxruntime/blob/5868413caf802bbd7f1dc0762b402988258d61d9/include/onnxruntime/core/session/onnxruntime_c_api.h#L207) for all possible values. The default logging level is `ORT_LOGGING_LEVEL_WARNING`.
 
 
 ## Limitations
@@ -142,3 +161,6 @@ to serve similar stateful ONNX models.
 * Only float (FP32) state tensors are supported
 * Model state reset tensor should be a boolean tensor
 * Only `oldest` sequence batching strategy is supported
+* **NOTE**: The backend cannot be loaded/unloaded repeatedly (e.g. Triton's explicit loading mode) since ORT doesn't allow destroying 
+and then re-creating Ort::Env objects. This should be mitigated once Triton is updated so that model unloading doesn't trigger the backend unloading. 
+Also, for the same reason, beware of using this backend along with any other ORT-based backend in the same Triton instance. May cause stability issues in ORT.

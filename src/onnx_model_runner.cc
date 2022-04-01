@@ -271,7 +271,7 @@ TrtOnnxModel::Prepare(
           mCudaStreamExe,
           1000,                              // trt_max_partition_iterations
           1,                                 // trt_min_subgraph_size
-          1 << 30,                           // max_workspace_size
+          static_cast<size_t>(4) << 30,      // max_workspace_size
           useFp16,                           // trt_fp16_enable
           0,                                 // trt_int8_enable
           nullptr,                           // trt_int8_calibration_table_name
@@ -290,7 +290,12 @@ TrtOnnxModel::Prepare(
     }
     OrtCUDAProviderOptions cuda_options;
     cuda_options.device_id = mGpuId;
+#if ORT_API_VERSION < 10
     cuda_options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearch::EXHAUSTIVE;
+#else
+    cuda_options.cudnn_conv_algo_search =
+      OrtCudnnConvAlgoSearch::OrtCudnnConvAlgoSearchExhaustive;
+#endif
     cuda_options.gpu_mem_limit = std::numeric_limits<size_t>::max();
     cuda_options.arena_extend_strategy = 0;
     cuda_options.do_copy_in_default_stream = 1;
@@ -970,6 +975,16 @@ void launchStoreGPUKernel_FP16(
     __half*** storage, float** states, int* sizesX, int* sizesY, int numStates,
     int* storeids, int batchSize, int batchStride, cudaStream_t stream);
 
+void
+TrtOnnxModel::clearStates(
+  const std::string& corrId)
+{
+  const int chunk_id = std::get<0>(mStoreIdMap[corrId]);
+  const int buffer_idx = std::get<1>(mStoreIdMap[corrId]);
+  mStoreAvailableIds[chunk_id].insert(buffer_idx);
+  mStoreIdMap.erase(corrId);
+}
+
 std::string
 TrtOnnxModel::prepareDeviceStoreIds(
     log_stream_t& verbose_ss, std::vector<InferenceTask>& inferenceTasks,
@@ -1004,10 +1019,7 @@ TrtOnnxModel::prepareDeviceStoreIds(
   // We must delete the timed-out sequences first to make room for new sequences
   for (auto& corrId : mCorrIdToDelete) {
     verbose_ss << "Timeout ocurred for CorrID : " << corrId << std::endl;
-    const int chunk_id = std::get<0>(mStoreIdMap[corrId]);
-    const int buffer_idx = std::get<1>(mStoreIdMap[corrId]);
-    mStoreAvailableIds[chunk_id].insert(buffer_idx);
-    mStoreIdMap.erase(corrId);
+    clearStates(corrId);
   }
   mCorrIdToDelete.clear();  // resets size but not capacity
 
@@ -1555,10 +1567,7 @@ TrtOnnxModel::InferTasks(
       // release the storage buffer
       auto& corrId = inferenceTasks[i].mCorrId;
       verbose_ss << "EndSequence received for CorrID : " << corrId << std::endl;
-      const int chunk_id = std::get<0>(mStoreIdMap[corrId]);
-      const int buffer_idx = std::get<1>(mStoreIdMap[corrId]);
-      mStoreAvailableIds[chunk_id].insert(buffer_idx);
-      mStoreIdMap.erase(corrId);
+      clearStates(corrId);
     }
   }
 
