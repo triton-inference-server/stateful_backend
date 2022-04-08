@@ -45,12 +45,6 @@
 #include "response_util.h"
 #include "request_util.h"
 
-#if (TRITONBACKEND_API_VERSION_MAJOR > 1) || \
-    ((TRITONBACKEND_API_VERSION_MAJOR == 1) && \
-     (TRITONBACKEND_API_VERSION_MINOR >= 6))
-  #define TRITON_SUPPORTS_STRING_CORRID
-#endif
-
 namespace triton { namespace backend { namespace stateful {
 
 namespace utils {
@@ -283,6 +277,13 @@ ModelState::InitModelState()
 #ifdef TRITON_SUPPORTS_STRING_CORRID
       if (control_data_type.compare("TYPE_STRING") == 0) {
         is_corrId_string_ = true;
+      }
+#else
+      if (control_data_type.compare("TYPE_STRING") == 0) { // INVALID TYPE
+        TRITONSERVER_Error* error = TRITONSERVER_ErrorNew(
+          TRITONSERVER_ERROR_UNSUPPORTED,
+          "This version of Triton does not support string CORRID.");
+        RETURN_IF_ERROR(error);
       }
 #endif
     }

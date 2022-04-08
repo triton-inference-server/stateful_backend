@@ -27,6 +27,12 @@
 #include "triton/backend/backend_model.h"
 #include "triton/backend/backend_model_instance.h"
 
+#if (TRITONBACKEND_API_VERSION_MAJOR > 1) || \
+    ((TRITONBACKEND_API_VERSION_MAJOR == 1) && \
+     (TRITONBACKEND_API_VERSION_MINOR >= 6))
+  #define TRITON_SUPPORTS_STRING_CORRID
+#endif
+
 #define GUARDED_RESPOND_IF_ERROR_INTERNAL(RESPONSE, X)                  \
   do {                                                                  \
     if ((RESPONSE) != nullptr) {                                        \
