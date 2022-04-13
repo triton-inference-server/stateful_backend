@@ -31,9 +31,14 @@
 
 namespace triton { namespace backend { namespace stateful { namespace utils {
 
+void* GetOutputBuffer(
+  TRITONBACKEND_Response** response,
+  TRITONBACKEND_Output* output,
+  size_t output_byte_size);
+
 void
 SendSingleEmptyResponse(
-  TRITONBACKEND_Response* response,
+  TRITONBACKEND_Response** response,
   std::vector<TritonTensorInfo>& output_tensors);
 
 TRITONSERVER_Error*

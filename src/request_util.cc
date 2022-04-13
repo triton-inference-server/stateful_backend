@@ -114,7 +114,7 @@ PreProcessRequests(
       // clear states for the sequence
       model_instance_state->trt_onnx_model_->clearStates(correlation_id);
       // send empty response
-      SendSingleEmptyResponse(responses[r], model_state->output_tensors_);
+      SendSingleEmptyResponse(&(responses[r]), model_state->output_tensors_);
       responses[r] = nullptr;
       continue;
     }
@@ -165,34 +165,10 @@ PreProcessRequests(
         continue;
       }
 
-      // Step 2. Get the output buffer. We request a buffer in CPU
-      // memory but we have to handle any returned type. If we get
-      // back a buffer in GPU memory we just fail the request.
-      void* output_buffer;
-      TRITONSERVER_MemoryType output_memory_type = TRITONSERVER_MEMORY_CPU;
-      int64_t output_memory_type_id = 0;
-      size_t output_byte_size = output_tensor.type_size * output_tensor.vol;
-      GUARDED_RESPOND_IF_ERROR(
-          responses, r,
-          TRITONBACKEND_OutputBuffer(
-              output, &output_buffer, output_byte_size, &output_memory_type,
-              &output_memory_type_id));
-
-      if ((response == nullptr) ||
-          (output_memory_type == TRITONSERVER_MEMORY_GPU)) {
-        GUARDED_RESPOND_IF_ERROR(
-            responses, r,
-            TRITONSERVER_ErrorNew(
-                TRITONSERVER_ERROR_UNSUPPORTED,
-                "failed to create output buffer in CPU memory"));
-        LOG_MESSAGE(
-            TRITONSERVER_LOG_ERROR,
-            (std::string("request ") + std::to_string(r) +
-             ": failed to create output buffer in CPU memory, error response "
-             "sent")
-                .c_str());
-        continue;
-      }
+      // Get the output buffer
+      void* output_buffer = stateful::utils::GetOutputBuffer(
+                              &(responses[r]), output,
+                              output_tensor.type_size * output_tensor.vol);
 
       inference_tasks_[true_ridx].mOutput[i_tensor++] = output_buffer;
     }

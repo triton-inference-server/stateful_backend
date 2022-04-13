@@ -25,25 +25,60 @@
 
 namespace triton { namespace backend { namespace stateful { namespace utils {
 
+void* GetOutputBuffer(
+  TRITONBACKEND_Response** response,
+  TRITONBACKEND_Output* output,
+  size_t output_byte_size)
+{
+  // We request a buffer in CPU memory but we have to handle
+  // any returned type. If we get back a buffer in GPU memory,
+  // we just fail the request.
+  void* output_buffer;
+  TRITONSERVER_MemoryType output_memory_type = TRITONSERVER_MEMORY_CPU;
+  int64_t output_memory_type_id = 0;
+  GUARDED_RESPOND_IF_ERROR_INTERNAL(
+    *response,
+      TRITONBACKEND_OutputBuffer(
+          output, &output_buffer, output_byte_size, &output_memory_type,
+          &output_memory_type_id));
+  if ((*response == nullptr) ||
+      (output_memory_type == TRITONSERVER_MEMORY_GPU)) {
+    GUARDED_RESPOND_IF_ERROR_INTERNAL(
+      *response,
+      TRITONSERVER_ErrorNew(
+        TRITONSERVER_ERROR_UNSUPPORTED,
+        "failed to create output buffer in CPU memory"));
+    LOG_MESSAGE(
+      TRITONSERVER_LOG_ERROR,
+      "Failed to create output buffer in CPU memory, error response sent.");
+    return nullptr;
+  }
+  return output_buffer;
+}
+
 void
 SendSingleEmptyResponse(
-  TRITONBACKEND_Response* response,
+  TRITONBACKEND_Response** response,
   std::vector<TritonTensorInfo>& output_tensors)
 {
-  std::vector<int64_t> zero_shape({0});
   for (auto& output_tensor : output_tensors) {
+    // NOTE: 0-sized malloc behavior is undefined.
+    // To minimize network traffic, we create a tensor of size 1
+    std::vector<int64_t> one_shape(output_tensor.shape.size(), 1);
     TRITONBACKEND_Output* output;
     GUARDED_RESPOND_IF_ERROR_INTERNAL(
-        response,
+        *response,
         TRITONBACKEND_ResponseOutput(
-            response, &output, output_tensor.name.c_str(),
-            TRITONSERVER_TYPE_FP32, zero_shape.data(),
-            zero_shape.size()));
+            *response, &output, output_tensor.name.c_str(),
+            TRITONSERVER_TYPE_FP32, one_shape.data(),
+            one_shape.size()));
+    // NOTE: Buffer creation is a must otherwise Triton sends error to client
+    GetOutputBuffer(response, output, 1); // since malloc(0) is undefined
   }
-  if (response != nullptr) {
+  if (*response != nullptr) {
     LOG_IF_ERROR(
         TRITONBACKEND_ResponseSend(
-            response, TRITONSERVER_RESPONSE_COMPLETE_FINAL, nullptr),
+            *response, TRITONSERVER_RESPONSE_COMPLETE_FINAL, nullptr),
         "failed sending response");
   }
 }
