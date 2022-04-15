@@ -27,32 +27,68 @@
 #include <vector>
 #include "grpc_client.h"
 
+#include "model_config_util.h"
+
 namespace tc = triton::client;
 
 using ResultList = std::vector<std::shared_ptr<tc::InferResult>>;
 
 // Model information for accumulate.onnx
-#define INPUT_NAME "Input"
-#define OUTPUT_NAME "Output"
-const int SEGMENT_LEN = 4;
-const int INPUT_DIM = 5;
-const int OUTPUT_DIM = 5;
-const int STATE_DIM = 5;
+static stateful::client::utils::ModelInfo info;
+static int SEGMENT_LEN = 4;
+static int STATE_DIM = 5;
 
 // Global mutex to synchronize the threads
-std::mutex mutex_;
-std::condition_variable cv_;
-
-#define FAIL_IF_ERR(X, MSG)                                        \
-  {                                                                \
-    tc::Error err = (X);                                           \
-    if (!err.IsOk()) {                                             \
-      std::cerr << "error: " << (MSG) << ": " << err << std::endl; \
-      exit(1);                                                     \
-    }                                                              \
-  }
+static std::mutex mutex_;
+static std::condition_variable cv_;
 
 namespace {
+
+std::vector<std::vector<std::vector<std::vector<float>>>>
+simulate_model(
+    const std::vector<std::vector<std::vector<std::vector<float>>>>& input_data,
+    const int num_sequence, const int num_segment)
+{
+  /*
+      'accumulate' model does the following:
+        1. accumulates the input along the sequence dim
+        2. adds the accumulation to the internal states (initialized to 0 for
+     start of sequence)
+        3. update the internal states with result of step 2
+        4. add the updated states to the original input which will be the final
+     output
+   */
+  std::vector<std::vector<std::vector<std::vector<float>>>> output(
+      num_sequence,
+      std::vector<std::vector<std::vector<float>>>(
+        num_segment,
+        std::vector<std::vector<float>>(info.output_names.size())));
+  std::vector<float> states(STATE_DIM);
+  for (int seq_idx = 0; seq_idx < num_sequence; ++seq_idx) {
+    // initialize the states
+    for (int sti = 0; sti < STATE_DIM; ++sti) states[sti] = 0.0f;
+
+    for (int seg_idx = 0; seg_idx < num_segment; ++seg_idx) {
+      for (int j = 0; j < STATE_DIM; ++j) {
+        float sum = states[j];
+        // Reduce
+        for (int i = 0; i < SEGMENT_LEN; ++i) {
+          sum += input_data[seq_idx][seg_idx][0][j + i*STATE_DIM];
+        }
+        // update states
+        states[j] = sum;
+        // calculate output
+        output[seq_idx][seg_idx][0].resize(SEGMENT_LEN * STATE_DIM);
+        for (int i = 0; i < SEGMENT_LEN; ++i) {
+          output[seq_idx][seg_idx][0][j + i * STATE_DIM] =
+              states[j] +
+               input_data[seq_idx][seg_idx][0][j + i * STATE_DIM];
+        }
+      }
+    }
+  }
+  return output;
+}
 
 void
 Usage(char** argv, const std::string& msg = std::string())
@@ -80,78 +116,28 @@ Usage(char** argv, const std::string& msg = std::string())
 void
 StreamSend(
     const std::unique_ptr<tc::InferenceServerGrpcClient>& client,
-    const std::string& model_name, float* value, const uint64_t sequence_id,
+    const std::string& model_name, std::vector<std::vector<float>>& values,
+    const uint64_t sequence_id,
     bool start_of_sequence, bool end_of_sequence, const int32_t index)
 {
   tc::InferOptions options(model_name);
-  options.sequence_id_ = sequence_id;
-  // options.sequence_id_str_ = std::to_string(sequence_id);
+  if (info.is_corrid_string) {
+    options.sequence_id_str_ = std::to_string(sequence_id);
+  }
+  else {
+    options.sequence_id_ = sequence_id;
+  }
   options.sequence_start_ = start_of_sequence;
   options.sequence_end_ = end_of_sequence;
   options.request_id_ =
       std::to_string(sequence_id) + "_" + std::to_string(index);
 
   // Initialize the inputs with the data.
-  size_t input_size = INPUT_DIM * SEGMENT_LEN;
-  tc::InferInput* input;
-  std::vector<int64_t> shape{1, SEGMENT_LEN, 1, INPUT_DIM};
-  // std::cout << "Will create the input" << std::endl;
-  FAIL_IF_ERR(
-      tc::InferInput::Create(&input, INPUT_NAME, shape, "FP32"),
-      "unable to create 'INPUT'");
-  std::shared_ptr<tc::InferInput> ivalue(input);
-  FAIL_IF_ERR(ivalue->Reset(), "unable to reset 'INPUT'");
-  FAIL_IF_ERR(
-      ivalue->AppendRaw(
-          reinterpret_cast<uint8_t*>(value), input_size * sizeof(float)),
-      "unable to set data for 'INPUT'");
-
-  std::vector<tc::InferInput*> inputs = {ivalue.get()};
+  std::vector<tc::InferInput*> inputs;
+  stateful::client::utils::PrepareInputs(inputs, info, values);
 
   // Send inference request to the inference server.
   FAIL_IF_ERR(client->AsyncStreamInfer(options, inputs), "unable to run model");
-}
-
-std::vector<std::vector<std::vector<float>>>
-simulate_model(
-    const std::vector<std::vector<std::vector<float>>>& input_data,
-    const int num_sequence, const int num_segment)
-{
-  /*
-      'accumulate' model does the following:
-        1. accumulates the input along the sequence dim
-        2. adds the accumulation to the internal states (initialized to 0 for
-     start of sequence)
-        3. update the internal states with result of step 2
-        4. add the updated states to the original input which will be the final
-     output
-   */
-  std::vector<std::vector<std::vector<float>>> output(
-      num_sequence, std::vector<std::vector<float>>(num_segment));
-  std::vector<float> states(STATE_DIM);
-  for (int seq_idx = 0; seq_idx < num_sequence; ++seq_idx) {
-    // initialize the states
-    for (int sti = 0; sti < STATE_DIM; ++sti) states[sti] = 0.0f;
-
-    for (int seg_idx = 0; seg_idx < num_segment; ++seg_idx) {
-      for (int j = 0; j < INPUT_DIM; ++j) {
-        float sum = states[j];
-        // Reduce
-        for (int i = 0; i < SEGMENT_LEN; ++i) {
-          sum += input_data[seq_idx][seg_idx][j + i * INPUT_DIM];
-        }
-        // update states
-        states[j] = sum;
-        // calculate output
-        output[seq_idx][seg_idx].resize(SEGMENT_LEN * OUTPUT_DIM);
-        for (int i = 0; i < SEGMENT_LEN; ++i) {
-          output[seq_idx][seg_idx][j + i * INPUT_DIM] =
-              states[j] + input_data[seq_idx][seg_idx][j + i * INPUT_DIM];
-        }
-      }
-    }
-  }
-  return output;
 }
 
 }  // namespace
@@ -159,8 +145,8 @@ simulate_model(
 int
 main(int argc, char** argv)
 {
-  const int NUM_SEQUENCE = 2;
-  const int NUM_SEGMENT = 3;
+  int NUM_SEQUENCE = 2;
+  int NUM_SEGMENT = 3;
   bool verbose = false;
   std::string url("localhost:8001");
   tc::Headers http_headers;
@@ -169,7 +155,7 @@ main(int argc, char** argv)
 
   // Parse commandline...
   int opt;
-  while ((opt = getopt(argc, argv, "vdu:H:t:o:")) != -1) {
+  while ((opt = getopt(argc, argv, "vu:H:t:o:S:s:")) != -1) {
     switch (opt) {
       case 'v':
         verbose = true;
@@ -188,6 +174,12 @@ main(int argc, char** argv)
         break;
       case 'o':
         sequence_id_offset = std::stoi(optarg);
+        break;
+      case 'S':
+        NUM_SEQUENCE = std::stoi(optarg);
+        break;
+      case 's':
+        NUM_SEGMENT = std::stoi(optarg);
         break;
       case '?':
         Usage(argv);
@@ -218,6 +210,16 @@ main(int argc, char** argv)
       tc::InferenceServerGrpcClient::Create(&client, url, verbose),
       "unable to create grpc client");
 
+  info = stateful::client::utils::GetModelInfo(client, model_name);
+  // NOTE: Assuming first positive dim is the 'seq' dim
+  for (auto& d : info.input_dims[0]) {
+    if (d > 0) {
+      SEGMENT_LEN = d;
+      break;
+    }
+  }
+  // std::cout << info.to_string() << std::endl;
+
   ResultList result_list;
 
   FAIL_IF_ERR(
@@ -234,21 +236,30 @@ main(int argc, char** argv)
       "unable to establish a streaming connection to server");
 
   // initialize input
-  const int input_size = INPUT_DIM * SEGMENT_LEN;
-  std::vector<std::vector<std::vector<float>>> input_data(
-      NUM_SEQUENCE, std::vector<std::vector<float>>(NUM_SEGMENT));
+  std::vector<
+    std::vector<
+      std::vector<
+        std::vector<float>>>> input_data(
+          NUM_SEQUENCE,
+          std::vector<std::vector<std::vector<float>>>(
+            NUM_SEGMENT,
+            std::vector<std::vector<float>>(info.input_names.size())));
   for (int seg_idx = 0; seg_idx < NUM_SEGMENT; ++seg_idx) {
     for (int seq_idx = 0; seq_idx < NUM_SEQUENCE; ++seq_idx) {
-      std::vector<float>& input_values = input_data[seq_idx][seg_idx];
-      input_values.resize(input_size);
-      for (int i = 0; i < input_size; ++i) {
-        input_values[i] = i + seg_idx * 100 + seq_idx * 1000;
-      }
+      for (size_t i=0; i<info.input_names.size(); ++i) {
+        std::vector<float>& input_values = input_data[seq_idx][seg_idx][i];
+        size_t input_size = info.input_vols[i];
+        input_values.resize(input_size);
+        for (int i = 0; i < input_size; ++i) {
+          input_values[i] = i + seg_idx * 100 + seq_idx * 1000;
+        }
 
-      // std::cout << sqi+sequence_id_offset << "_" << si << " (IN) :: ";
-      // for (auto f : input_values)
-      //   std::cout << f << ", ";
-      // std::cout << std::endl;
+        // std::cout << seq_idx+sequence_id_offset << "_"
+        //           << seg_idx <<" (IN) :: ";
+        // for (auto f : input_values)
+        //   std::cout << f << ", ";
+        // std::cout << std::endl;
+      }
     }
   }
 
@@ -256,27 +267,34 @@ main(int argc, char** argv)
   for (int seg_idx = 0; seg_idx < NUM_SEGMENT; ++seg_idx) {
     for (int seq_idx = 0; seq_idx < NUM_SEQUENCE; ++seq_idx) {
       StreamSend(
-          client, model_name, input_data[seq_idx][seg_idx].data(),
+          client, model_name, input_data[seq_idx][seg_idx],
           seq_idx + sequence_id_offset, seg_idx == 0,
-          // false, seg_idx); // to test infer_end_request=0 case
-          seg_idx == (NUM_SEGMENT - 1), seg_idx);
+          info.infer_end_requests && seg_idx == (NUM_SEGMENT - 1), seg_idx);
     }
   }
-  // NOTE: This block is needed for infer_end_request=0 case
-  // for (int seq_idx = 0; seq_idx < NUM_SEQUENCE; ++seq_idx) {
-  //   StreamSend(
-  //       client, model_name, input_data[seq_idx][0].data(),
-  //       seq_idx + sequence_id_offset, false,
-  //       true, NUM_SEGMENT);
-  // }
+  // If infer_end_requests=0, we need to send the end signal now
+  // we can send garbage data since inference won't be run
+  if (!info.infer_end_requests) {
+    for (int seq_idx = 0; seq_idx < NUM_SEQUENCE; ++seq_idx) {
+      StreamSend(
+          client, model_name, input_data[seq_idx][0],
+          seq_idx + sequence_id_offset, false,
+          true, NUM_SEGMENT);
+    }
+  }
 
+  size_t expected_result_count = NUM_SEGMENT * NUM_SEQUENCE;
+  if (!info.infer_end_requests) {
+    // we need to count the extra end signals
+    expected_result_count += NUM_SEQUENCE;
+  }
   // wait for all the requests to be done
   if (stream_timeout == 0) {
     // Wait until all callbacks are invoked
     {
       std::unique_lock<std::mutex> lk(mutex_);
       cv_.wait(lk, [&]() {
-        if (result_list.size() >= (NUM_SEGMENT * NUM_SEQUENCE)) {
+        if (result_list.size() >= expected_result_count) {
           return true;
         } else {
           return false;
@@ -289,7 +307,7 @@ main(int argc, char** argv)
     {
       std::unique_lock<std::mutex> lk(mutex_);
       if (!cv_.wait_for(lk, timeout, [&]() {
-            return (result_list.size() >= (NUM_SEGMENT * NUM_SEQUENCE));
+            return (result_list.size() >= expected_result_count);
           })) {
         std::cerr << "Stream has been closed" << std::endl;
         exit(1);
@@ -298,25 +316,15 @@ main(int argc, char** argv)
   }
 
   // Extract data from the result
-  const int output_size = OUTPUT_DIM * SEGMENT_LEN;
-  std::vector<std::vector<std::vector<float>>> output_data(
-      NUM_SEQUENCE, std::vector<std::vector<float>>(NUM_SEGMENT));
+  std::vector<std::vector<std::vector<std::vector<float>>>> output_data(
+      NUM_SEQUENCE,
+      std::vector<std::vector<std::vector<float>>>(
+        NUM_SEGMENT,
+        std::vector<std::vector<float>>(info.output_names.size())));
   for (const auto& this_result : result_list) {
     auto err = this_result->RequestStatus();
     if (!err.IsOk()) {
       std::cerr << "The inference failed: " << err << std::endl;
-      exit(1);
-    }
-    // Get pointers to the result returned...
-    float* output_raw_data;
-    size_t output_byte_size;
-    FAIL_IF_ERR(
-        this_result->RawData(
-            OUTPUT_NAME, (const uint8_t**)&output_raw_data, &output_byte_size),
-        "unable to get result data for 'Output'");
-    if (output_byte_size != (sizeof(float) * output_size)) {
-      std::cerr << "error: received incorrect byte size for 'Output': "
-                << output_byte_size << std::endl;
       exit(1);
     }
 
@@ -330,15 +338,10 @@ main(int argc, char** argv)
         std::stoi(std::string(request_id, request_id.find("_") + 1));
     if (sequence_idx >= 0 && sequence_idx < NUM_SEQUENCE && segment_idx >= 0 &&
         segment_idx < NUM_SEGMENT) {
-      output_data[sequence_idx][segment_idx].resize(output_size);
-      std::copy(
-          output_raw_data, output_raw_data + output_size,
-          std::begin(output_data[sequence_idx][segment_idx]));
-
-      // std::cout << this_sequence_id << "_" << segment_idx << " :: ";
-      // for (auto f : output_data[sequence_idx][segment_idx])
-      //   std::cout << f << ", ";
-      // std::cout << std::endl;
+      stateful::client::utils::RetrieveOutputs(
+        this_result, info, output_data[sequence_idx][segment_idx]);
+    } else if (!info.infer_end_requests && segment_idx == NUM_SEGMENT) {
+      // ignore response for end signals
     } else {
       std::cerr << "error: received incorrect sequence id in response: "
                 << this_sequence_id << std::endl;
@@ -346,19 +349,20 @@ main(int argc, char** argv)
     }
   }
 
-  std::vector<std::vector<std::vector<float>>> expected_output =
+  std::vector<std::vector<std::vector<std::vector<float>>>> expected_output =
       simulate_model(input_data, NUM_SEQUENCE, NUM_SEGMENT);
 
   for (int seq_idx = 0; seq_idx < NUM_SEQUENCE; ++seq_idx) {
     for (int seg_idx = 0; seg_idx < NUM_SEGMENT; ++seg_idx) {
+      int64_t output_size = info.output_vols[0];
       for (int i = 0; i < output_size; ++i) {
-        if (output_data[seq_idx][seg_idx][i] !=
-            expected_output[seq_idx][seg_idx][i]) {
+        if (output_data[seq_idx][seg_idx][0][i] !=
+            expected_output[seq_idx][seg_idx][0][i]) {
           std::cerr << "FAILED!" << std::endl;
           std::cerr << "Sequence " << sequence_ids[seq_idx] << " Segment "
                     << seg_idx << " : expected "
-                    << expected_output[seq_idx][seg_idx][i] << " , got "
-                    << output_data[seq_idx][seg_idx][i] << std::endl;
+                    << expected_output[seq_idx][seg_idx][0][i] << " , got "
+                    << output_data[seq_idx][seg_idx][0][i] << std::endl;
           return 1;
         }
       }

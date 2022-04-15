@@ -19,7 +19,7 @@
 # IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-cmake_minimum_required (VERSION 3.10)
+cmake_minimum_required (VERSION 3.17)
 
 project(Clients C CXX)
 
@@ -47,7 +47,7 @@ function(build_client src exe extra_incs)
     TARGETS ${exe}
     RUNTIME DESTINATION bin
   )
-  target_include_directories(${exe} PUBLIC ${extra_incs} ${GRPC_CLIENT_INC_DIR})
+  target_include_directories(${exe} PUBLIC ${extra_incs} ${GRPC_CLIENT_INC_DIR} ${CMAKE_CURRENT_FUNCTION_LIST_DIR})
 endfunction(build_client)
 
 if(WIN32)

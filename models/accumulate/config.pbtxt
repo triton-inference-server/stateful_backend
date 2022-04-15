@@ -157,7 +157,7 @@ parameters [
     #  1 : Treat the end requests like any other and run inference
     #  0 : Do not run inference, only send an OK response with 0-shaped data
     #  Default: 1
-    value: { string_value: "1" }
+    value: { string_value: "0" }
   },
   {
     key: "logging_level"
