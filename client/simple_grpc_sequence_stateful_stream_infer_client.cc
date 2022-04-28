@@ -69,6 +69,7 @@ simulate_model(
     for (int sti = 0; sti < STATE_DIM; ++sti) states[sti] = 0.0f;
 
     for (int seg_idx = 0; seg_idx < num_segment; ++seg_idx) {
+      output[seq_idx][seg_idx][0].resize(SEGMENT_LEN * STATE_DIM); // 1 out tnsr
       for (int j = 0; j < STATE_DIM; ++j) {
         float sum = states[j];
         // Reduce
@@ -78,7 +79,6 @@ simulate_model(
         // update states
         states[j] = sum;
         // calculate output
-        output[seq_idx][seg_idx][0].resize(SEGMENT_LEN * STATE_DIM);
         for (int i = 0; i < SEGMENT_LEN; ++i) {
           output[seq_idx][seg_idx][0][j + i * STATE_DIM] =
               states[j] +
@@ -250,8 +250,8 @@ main(int argc, char** argv)
         std::vector<float>& input_values = input_data[seq_idx][seg_idx][i];
         size_t input_size = info.input_vols[i];
         input_values.resize(input_size);
-        for (int i = 0; i < input_size; ++i) {
-          input_values[i] = i + seg_idx * 100 + seq_idx * 1000;
+        for (size_t j = 0; j < input_size; ++j) {
+          input_values[j] = j + seg_idx * 100 + seq_idx * 1000;
         }
 
         // std::cout << seq_idx+sequence_id_offset << "_"
