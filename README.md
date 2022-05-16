@@ -129,27 +129,57 @@ to serve similar stateful ONNX models.
 ## Additional features 
 * Stateful backend can do dynamic batching along any tensor dimension. The batch dimension should be marked with -1 in the model configuration file for the input and output tensors. 
 * The state tensors can only have one dynamic dimension that is assumed to be the batch dimension. 
-* The ONNX model should contain the initial values for the state tensors. `CONTROL_SEQUENCE_START` control input can be mapped to a boolean model input tensor that signals when to reset the initial values of the states.
+* The ONNX model should contain the initial values for the state tensors. `CONTROL_SEQUENCE_START` control input can be mapped to a boolean model input tensor
+   that signals when to reset the initial values of the states.
 * `ort_ep` model config parameter to choose the ORT backend between `trt` and `cuda`
 * `compute_precision` model config parameter to specify the precision (`fp32` or `fp16`). `fp16` is only supported for ORT `trt` EP.
 * `always_pad_to_max_batch` model config parameter to specify whether the batch dimension should be padded to max batch size for model execution (set value to `1`)
-* `store_states_as_fp16` model config paramter to specify whether the internal states are stored as FP16 to reduce memory consumption (set value to `1`). However, it may impact the result accuracy.
+* `store_states_as_fp16` model config paramter to specify whether the internal states are stored as FP16 to reduce memory consumption (set value to `1`).
+   However, it may impact the result accuracy.
 * `metric_logging_frequency_seconds` controls how frequently the backend logs the inference statistics. Default is `0` to disable such logs.
 * `enable_trt_caching` and `trt_cache_dir` to control the engine caching from TRT. The default values are `0` (disabled) and `/tmp` respectively.
 * `logging_level` controls the level of details in the backend's model runner logs. Possible values are `NONE`, `INFO` and `VERBOSE`. Default is `INFO`.
 * `max_candidate_sequence_use_ratio` controls whether the number of maximum simultaneous sequences should less than what Triton uses 
-i.e. `max_candidate_sequences`. The ratio can be used to enable prompt error handling in the backend for overloaded servers. Default value for this is `0.9`. 
+   i.e. `max_candidate_sequences`. The ratio can be used to enable prompt error handling in the backend for overloaded servers. Default value for this is `0.9`.
 * `infer_end_requests` controls whether to run inference on requests with `end` signal. If specified as `0`, the backend will not run inference 
-for such requests, release the state buffers for those sequences and send successful response with empty output. Default value is `1`.
-* Lazy allocation of the states buffer can be enabled and configured using 4 additional parameters: `initial_buffer_size`, `subsequent_buffer_size`, 
-`buffer_alloc_threshold`, and `buffer_dealloc_threshold`. By default, the lazy allocation feature is disabled and the backend allocates 
-the whole buffer during the model loading for the `max_candidate_sequences` simultaneous sequences. If `initial_buffer_size` is present in the
-model config, the other 3 configs must be present as well and the backend only allocates the buffer for the `initial_buffer_size` sequences during loading.
-Once the number of free slots reach below the `buffer_alloc_threshold`, it will create a new buffer of size `subsequent_buffer_size`. On the other hand, 
-when the number of free slots reach above the `buffer_dealloc_threshold` and the number of allocated buffers are more than 1 (including the initial buffer), 
-it will deallocate only the last buffer if it isn't storing states for any active sequences i.e. all the slots of this buffer are free. 
-Refer to the [code](https://github.com/triton-inference-server/stateful_backend/blob/201df524a08e9c5410772eb7e742573e56846c7a/src/onnx_model_runner.cc#L192) 
-for any more restrictions on these parameters.
+   for such requests, release the state buffers for those sequences and send successful response with empty output. Default value is `1`.
+* Lazy allocation of the states buffer can be enabled and configured using 4 additional **parameters**: `initial_buffer_size`, `subsequent_buffer_size`,
+`buffer_alloc_threshold`, and `buffer_dealloc_threshold`.
+   * By default, the lazy allocation feature is disabled and the backend allocates
+      the whole buffer during the model loading for the `max_candidate_sequences` simultaneous sequences.
+   * If `initial_buffer_size` is present in the model config, the other 3 configs must be present as well and
+      the lazy allocation behavior is enabled. If enabled, the backend only allocates the buffer for the `initial_buffer_size` sequences during loading.
+   * Once the number of free slots reach below the `buffer_alloc_threshold`, it will create a new buffer of size `subsequent_buffer_size`.
+   * On the other hand, it will deallocate only the last buffer and the deallocation occurs when the following conditions are met:
+      * the number of allocated buffers (including the initial buffer) is more than 1
+      * the total number of free slots reaches above the `buffer_dealloc_threshold`
+      * all the slots of the last buffer are free i.e. it isn't storing states for any active sequences
+   * The initial buffer is never deallocated until the model gets unloaded.
+   * For example, the following could be a valid combinations for the config parameters when `max_batch_size` is 16:
+      ```
+         parameters [
+         ...
+            {
+               key: "initial_buffer_size"
+               value: { string_value: "512" }
+            },
+            {
+               key: "subsequent_buffer_size"
+               value: { string_value: "100" }
+            },
+            {
+               key: "buffer_alloc_threshold"
+               value: { string_value: "32" }
+            },
+            {
+               key: "buffer_dealloc_threshold"
+               value: { string_value: "200" }
+            },
+         ...
+         ]
+      ```
+   * Refer to the [code](https://github.com/triton-inference-server/stateful_backend/blob/201df524a08e9c5410772eb7e742573e56846c7a/src/onnx_model_runner.cc#L192) 
+   for any more restrictions on these parameters.
 * ORT Environment is created during the backend initialization so that multiple models can share the same environment. To control the ORT logging level, 
 you can pass a command line argument when starting Triton, e.g. `tritonserver --model-repository <model dir> --backend-config=stateful,ort-logging-level=3` 
 will set the ORT logging level to `ORT_LOGGING_LEVEL_ERROR`. Refer to [this](https://github.com/microsoft/onnxruntime/blob/5868413caf802bbd7f1dc0762b402988258d61d9/include/onnxruntime/core/session/onnxruntime_c_api.h#L207) for all possible values. The default logging level is `ORT_LOGGING_LEVEL_WARNING`.
