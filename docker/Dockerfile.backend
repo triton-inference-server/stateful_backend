@@ -84,7 +84,7 @@ RUN rm -f /usr/local/bin/cmake
 WORKDIR /workspace
 
 # Clone ONNXRT release branch
-RUN git clone --branch rel-1.11.0  https://github.com/microsoft/onnxruntime.git && cd /workspace/onnxruntime && git checkout b713855a980056d89a1e550ad81dc3c19573d7a0
+RUN git clone --branch rel-1.11.1  https://github.com/microsoft/onnxruntime.git && cd /workspace/onnxruntime && git checkout 366f4ebcb425b6a47c2b0decd3b39fa14eb9dbf6
 # initialize the submodules in case we need any customizations
 RUN cd /workspace/onnxruntime && git submodule sync --recursive && git submodule update --init --recursive
 # Build the ONNXRT

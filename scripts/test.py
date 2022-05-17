@@ -30,6 +30,7 @@ import stateful_utils
 import stateful_config
 import build_backend
 from stateful_utils import LogPrint
+from packaging import version
 
 TEST_FLAGS = None
 
@@ -127,13 +128,44 @@ def RunClient(root_dir):
   if TEST_FLAGS.client_container_name != "":
     client_container_name = TEST_FLAGS.client_container_name
   ccnt = stateful_utils.get_running_container(client_container_name)
+  new_container_created = False
   if ccnt is None:
     ccnt = stateful_utils.create_container(stateful_config.TRITONCLIENT_IMAGE, \
-        cnt_name=client_container_name, volumes=TRITON_VOLUMES)
+        cnt_name=client_container_name, volumes=TRITON_VOLUMES, as_root=True)
     ccnt.start()
+    new_container_created = True
   assert ccnt != None
   ccnt.reload()
   assert ccnt.status == "running"
+  print("Client container running ...", flush=True)
+  # The next few setup commands are only needed for SDK container versions > 22.03
+  if new_container_created and version.parse(stateful_config.TRITON_REPO_VERSION) > version.parse("22.03"):
+    # This key fix should be temporary until Triton SDK container is updated
+    status = ccnt.exec_run(stateful_config.TRITON_CLIENT_PUBKEY_FIX_CMD)
+    # print(status[0], status[1].decode())
+    assert status[0] == 0
+
+    # The following are necessary for 22.04 and newer SDK containers
+    status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_WGET_KEY_CMD)
+    # print(status[0], status[1].decode())
+    assert status[0] == 0
+    status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_GPG_KEY_CMD)
+    # print(status[0], status[1].decode())
+    assert status[0] == 0
+    status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_ADD_KEY_CMD)
+    # print(status[0], status[1].decode())
+    assert status[0] == 0
+    status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_ADD_REPO_CMD)
+    # print(status[0], status[1].decode())
+    assert status[0] == 0
+    status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_APT_UPDATE_CMD)
+    # print(status[0], status[1].decode())
+    assert status[0] == 0
+    status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_INSTALL_CMD)
+    # print(status[0], status[1].decode())
+    assert status[0] == 0
+    print("CMake is now installed!")
+
   status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_SETUP_CMD)
   # print(status[0], status[1].decode())
   assert status[0] == 0
@@ -162,9 +194,9 @@ def DoEverything(root_dir):
   ccnt = None
   try:
     ccnt = RunClient(root_dir)
-  except:
+  except Exception as ex:
     err_happened = True
-    print("Client error")
+    print("Client error: ", ex)
   time.sleep(2) # sleep for 2 seconds
   # 4. Stop the server
   stop_server(scnt)
