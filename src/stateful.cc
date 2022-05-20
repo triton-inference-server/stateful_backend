@@ -962,7 +962,7 @@ TRITONBACKEND_ModelInstanceExecute(
   std::cout << "Executing the model \n" << std::endl;
 #endif
 
-  uint64_t exec_start_ns = 0;
+  uint64_t exec_start_ns = 0, exec_end_ns = 0;
   SET_TIMESTAMP(exec_start_ns);
 
   // Triton will not call this function simultaneously for the same
@@ -1045,81 +1045,86 @@ TRITONBACKEND_ModelInstanceExecute(
 
   uint64_t comp_start_ns = 0, comp_end_ns = 0;
 
-  const bool send_response_early = true;
-  void* vp_responses = send_response_early ?
-              reinterpret_cast<void*>(responses.data()) : nullptr;
-  std::string err_msg;
-  try {
-    // Now that we set all input / output, we can do the inferencing
-    std::stringstream ss_logs;
-    err_msg = instance_state->trt_onnx_model_->InferTasks(
-        ss_logs, instance_state->inference_tasks_, infer_request_count,
-        vp_responses, comp_start_ns,
-        comp_end_ns);
+  if (infer_request_count > 0) {
+    LOG_MESSAGE(TRITONSERVER_LOG_INFO,
+                (std::string("Running inference of ") +
+                std::to_string(infer_request_count) + " requests.").c_str());
+    const bool send_response_early = true;
+    void* vp_responses = send_response_early ?
+                reinterpret_cast<void*>(responses.data()) : nullptr;
+    std::string err_msg;
+    try {
+      // Now that we set all input / output, we can do the inferencing
+      std::stringstream ss_logs;
+      err_msg = instance_state->trt_onnx_model_->InferTasks(
+          ss_logs, instance_state->inference_tasks_, infer_request_count,
+          vp_responses, comp_start_ns,
+          comp_end_ns);
 
-    std::string str_logs = ss_logs.str();
-    if (model_state->logging_level_ >= 0 && !str_logs.empty()) {
-      if (str_logs.back() == '\n')
-        str_logs.pop_back();  // remove last newline since Triton adds one
-      LOG_MESSAGE(TRITONSERVER_LOG_INFO, str_logs.c_str());
-    }
-  }
-  // For execptions, only set the err_msg since we need to send the responses
-  // for each request
-  catch (const std::bad_alloc& e) {
-    err_msg = std::string(
-        "MEMORY ALLOCATION ERROR during Inference:: "
-        "Please try to reduce the number of instances and/or the "
-        "max_candidate_sequences.");
-  }
-  catch (const std::exception& e) {
-    err_msg += std::string("ERROR during Inference: ") + std::string(e.what());
-  }
-
-  uint64_t exec_end_ns = 0;
-  SET_TIMESTAMP(exec_end_ns);
-
-  // if err_msg is not empty the entire batch sends error response
-  if (!err_msg.empty()) {
-    auto error =
-        TRITONSERVER_ErrorNew(TRITONSERVER_ERROR_INTERNAL, err_msg.c_str());
-    /*
-        NOTE: It seems Triton expects an error ONLY IF we don't
-        send/create response for any requests.
-         - Since we already created the response objects, we have
-           ownership of the requests/responses.
-         - If we return with an error at this point, Triton hangs at exit,
-           thinking that it has the responsibility to send the responses.
-         - Instead we send the same response for each request,
-           release the request objects, and then return a nullptr.
-         - For individual request error, we need to send appropriate response
-           for the particular requests. See next section.
-    */
-    for (uint32_t r = 0; r < request_count; ++r) {
-      // No need to send a response if we already sent one e.g.
-      // empty response for end requests that didn't need inference
-      if (responses[r] != nullptr) {
-        LOG_IF_ERROR(
-            TRITONBACKEND_ResponseSend(
-                responses[r], TRITONSERVER_RESPONSE_COMPLETE_FINAL, error),
-            "failed to send error response");
+      std::string str_logs = ss_logs.str();
+      if (model_state->logging_level_ >= 0 && !str_logs.empty()) {
+        if (str_logs.back() == '\n')
+          str_logs.pop_back();  // remove last newline since Triton adds one
+        LOG_MESSAGE(TRITONSERVER_LOG_INFO, str_logs.c_str());
       }
-
-      TRITONBACKEND_Request* request = requests[r];
-      LOG_IF_ERROR(
-          TRITONBACKEND_RequestRelease(
-              request, TRITONSERVER_REQUEST_RELEASE_ALL),
-          "failed releasing request");
     }
-    return nullptr;
+    // For execptions, only set the err_msg since we need to send the responses
+    // for each request
+    catch (const std::bad_alloc& e) {
+      err_msg = std::string(
+          "MEMORY ALLOCATION ERROR during Inference:: "
+          "Please try to reduce the number of instances and/or the "
+          "max_candidate_sequences.");
+    }
+    catch (const std::exception& e) {
+      err_msg += std::string("ERROR during Inference: ") + std::string(e.what());
+    }
+
+    // if err_msg is not empty the entire batch sends error response
+    // NOTE: stats are not reported in this scenario.
+    if (!err_msg.empty()) {
+      auto error =
+          TRITONSERVER_ErrorNew(TRITONSERVER_ERROR_INTERNAL, err_msg.c_str());
+      /*
+          NOTE: It seems Triton expects an error ONLY IF we don't
+          send/create response for any requests.
+          - Since we already created the response objects, we have
+            ownership of the requests/responses.
+          - If we return with an error at this point, Triton hangs at exit,
+            thinking that it has the responsibility to send the responses.
+          - Instead we send the same response for each request,
+            release the request objects, and then return a nullptr.
+          - For individual request error, we need to send appropriate response
+            for the particular requests. See next section.
+      */
+      for (uint32_t r = 0; r < request_count; ++r) {
+        // No need to send a response if we already sent one e.g.
+        // empty response for end requests that didn't need inference
+        if (responses[r] != nullptr) {
+          LOG_IF_ERROR(
+              TRITONBACKEND_ResponseSend(
+                  responses[r], TRITONSERVER_RESPONSE_COMPLETE_FINAL, error),
+              "failed to send error response");
+        }
+
+        TRITONBACKEND_Request* request = requests[r];
+        LOG_IF_ERROR(
+            TRITONBACKEND_RequestRelease(
+                request, TRITONSERVER_REQUEST_RELEASE_ALL),
+            "failed releasing request");
+      }
+      return nullptr;
+    }
+
+    if (!send_response_early) {
+      // Send the responses
+      triton::backend::stateful::utils::SendResponses(
+        instance_state->inference_tasks_, infer_request_count,
+        reinterpret_cast<void*>(responses.data()));
+    }
   }
 
-  if (!send_response_early) {
-    // Send the responses
-    triton::backend::stateful::utils::SendResponses(
-      instance_state->inference_tasks_, infer_request_count,
-      reinterpret_cast<void*>(responses.data()));
-  }
+  SET_TIMESTAMP(exec_end_ns);
 
   // post-process the original batch
   for (uint32_t r = 0; r < request_count; ++r) {
