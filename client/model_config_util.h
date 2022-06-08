@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <sstream>
+#include <cmath>
 
 #include "grpc_client.h"
 
@@ -26,6 +27,38 @@ namespace stateful
   {
     namespace utils
     {
+      size_t TypeSize(inference::DataType typ) {
+        switch(typ)
+        {
+        case inference::DataType::TYPE_BOOL:
+          return 1;
+        case inference::DataType::TYPE_FP32:
+          return 4;
+        case inference::DataType::TYPE_FP16:
+          return 2;
+        case inference::DataType::TYPE_INT8:
+          return 1;
+        case inference::DataType::TYPE_INT32:
+          return 4;
+        }
+        return 0;
+      }
+      std::string TypeName(inference::DataType typ) {
+        switch(typ)
+        {
+        case inference::DataType::TYPE_BOOL:
+          return "BOOL";
+        case inference::DataType::TYPE_FP32:
+          return "FP32";
+        case inference::DataType::TYPE_FP16:
+          return "FP16";
+        case inference::DataType::TYPE_INT8:
+          return "INT8";
+        case inference::DataType::TYPE_INT32:
+          return "INT32";
+        }
+        return "UNDEFINED";
+      }
       typedef struct ModelInfo {
         bool is_corrid_string{false};
         bool infer_end_requests{true};
@@ -35,6 +68,8 @@ namespace stateful
         std::vector<std::vector<int64_t>> output_dims;
         std::vector<std::string> input_names;
         std::vector<std::string> output_names;
+        std::vector<inference::DataType> input_types;
+        std::vector<inference::DataType> output_types;
         std::string to_string() {
           std::stringstream ss;
           ss << "is_corrid_string : " << is_corrid_string << std::endl;
@@ -46,7 +81,9 @@ namespace stateful
               ss << ", " << input_dims[i][j];
             }
             ss << "]";
-            ss << ", Volume: " << input_vols[i] << std::endl;
+            ss << ", Volume: " << input_vols[i];
+            ss << ", DataType: " << TypeName(input_types[i]);
+            ss << std::endl;
           }
           ss << "Outputs: " << std::endl;
           for (size_t i=0; i<output_names.size(); ++i) {
@@ -55,7 +92,9 @@ namespace stateful
               ss << ", " << output_dims[i][j];
             }
             ss << "]";
-            ss << ", Volume: " << output_vols[i] << std::endl;
+            ss << ", Volume: " << output_vols[i];
+            ss << ", DataType: " << TypeName(output_types[i]);
+            ss << std::endl;
           }
           return ss.str();
         }
@@ -127,6 +166,7 @@ namespace stateful
           }
           info.input_vols.push_back(vol);
           info.input_dims.push_back(dim);
+          info.input_types.push_back(in.data_type());
         }
         // get the outputs
         for (auto& out : config.output()) {
@@ -139,6 +179,7 @@ namespace stateful
           }
           info.output_vols.push_back(vol);
           info.output_dims.push_back(dim);
+          info.output_types.push_back(out.data_type());
         }
         return info;
       }
@@ -146,11 +187,13 @@ namespace stateful
       void PrepareInputs(
         std::vector<tc::InferInput*>& inputs,
         ModelInfo& info,
-        std::vector<std::vector<float>>& data)
+        std::vector<std::shared_ptr<void>>& data)
       {
         for (size_t i=0; i<info.input_names.size(); ++i) {
-          auto in_name = info.input_names[i];
-          auto& dims = info.input_dims[i];
+          const auto& in_name = info.input_names[i];
+          const auto& dims = info.input_dims[i];
+          const auto& typ = info.input_types[i];
+          const size_t type_size = TypeSize(typ);
           int64_t input_size = info.input_vols[i];
           // std::cout << input_size << std::endl;
           tc::InferInput* input;
@@ -161,15 +204,16 @@ namespace stateful
           }
           // std::cout << "Will create the input" << std::endl;
           FAIL_IF_ERR(
-            tc::InferInput::Create(&input, in_name, shape, "FP32"),
+            tc::InferInput::Create(&input, in_name, shape,
+              TypeName(typ)),
             std::string("unable to create '") + in_name + "'");
           FAIL_IF_ERR(
             input->Reset(),
             std::string("unable to reset '") + in_name + "'");
           FAIL_IF_ERR(
             input->AppendRaw(
-              reinterpret_cast<uint8_t*>(data[i].data()),
-              input_size * sizeof(float)),
+              reinterpret_cast<uint8_t*>(data[i].get()),
+              input_size * type_size),
               std::string("unable to set data for '") + in_name + "'");
           inputs.emplace_back(input);
         }
@@ -179,7 +223,8 @@ namespace stateful
         const std::shared_ptr<tc::InferResult> result,
         const std::string& tensor_name,
         const size_t output_size,
-        float** output_raw_data,
+        const size_t type_size,
+        void** output_raw_data,
         size_t& output_byte_size)
       {
         FAIL_IF_ERR(
@@ -187,7 +232,7 @@ namespace stateful
                 tensor_name, (const uint8_t**)output_raw_data,
                 &output_byte_size),
             "unable to get result data for 'Output'");
-        if (output_byte_size != (sizeof(float) * output_size)) {
+        if (output_byte_size != (type_size * output_size)) {
           std::cerr << "error: received incorrect byte size for 'Output': "
                     << output_byte_size << " vs. " << output_size <<std::endl;
           exit(1);
@@ -197,25 +242,235 @@ namespace stateful
       void RetrieveOutputs(
         std::shared_ptr<tc::InferResult> result,
         ModelInfo& info,
-        std::vector<std::vector<float>>& output_data)
+        std::vector<std::shared_ptr<void>>& output_data)
       {
         // Get pointers to the result returned...
         for (size_t i=0; i<info.output_names.size(); ++i) {
-          int64_t output_size = info.output_vols[i];
-          float* output_raw_data;
+          const size_t output_size = info.output_vols[i];
+          const size_t type_size = TypeSize(info.output_types[i]);
+          void* output_raw_data;
           size_t output_byte_size;
           RetrieveSingleOutputTensor(result, info.output_names[i],
-                                      output_size, &output_raw_data,
+                                      output_size, type_size, &output_raw_data,
                                       output_byte_size);
-          output_data[i].resize(output_size);
-          std::copy(
-              output_raw_data, output_raw_data + output_size,
-              std::begin(output_data[i]));
+          output_data[i] = std::shared_ptr<void>(malloc(output_byte_size), free);
+          memcpy(
+              (uint8_t*)output_data[i].get(),
+              (const uint8_t*)output_raw_data, output_byte_size
+              );
 
           // std::cout << this_sequence_id << "_" << segment_idx << " :: ";
           // for (auto f : output_data[i])
           //   std::cout << f << ", ";
           // std::cout << std::endl;
+        }
+      }
+
+      // only supports reduce of axis=0 or axis=1 for [r, c]-sized tensors
+      template<typename T, int axis>
+      void op_reduce_sum(
+        const size_t r, const size_t c,
+        const T* data, float* sum)
+      {
+        if (axis == 0) {
+          for (size_t i=0; i < r; ++i) {
+            for(size_t j=0; j < c; ++j) {
+              sum[j] += data[j+i*c];
+            }
+          }
+        } else if (axis == 1) {
+          for (size_t i=0; i < r; ++i) {
+            float csum = 0;
+            for(size_t j=0; j < c; ++j) {
+              csum += data[j];
+            }
+            sum[i] += csum;
+          }
+        }
+      }
+
+      template<int axis>
+      void op_reduce_sum(
+        const size_t r, const size_t c,
+        const void* vdata, float* out,
+        const inference::DataType typ)
+      {
+        switch(typ)
+        {
+        case inference::DataType::TYPE_BOOL:
+          op_reduce_sum<bool, axis>(r, c,
+              reinterpret_cast<const bool*>(vdata), out);
+          break;
+        case inference::DataType::TYPE_FP32:
+          op_reduce_sum<float, axis>(r, c,
+              reinterpret_cast<const float*>(vdata), out);
+          break;
+        case inference::DataType::TYPE_FP16:
+          assert(0); // FP16 in C++ clientd is not supported yet
+          break;
+        case inference::DataType::TYPE_INT8:
+          op_reduce_sum<int8_t, axis>(r, c,
+              reinterpret_cast<const int8_t*>(vdata), out);
+          break;
+        case inference::DataType::TYPE_INT32:
+          op_reduce_sum<int32_t, axis>(r, c,
+              reinterpret_cast<const int32_t*>(vdata), out);
+          break;
+        }
+      }
+
+      template<typename T>
+      void op_add(
+        const size_t r, const size_t c,
+        const void* vin1, const void* vin2, void* vout)
+      {
+        const T* in1 = reinterpret_cast<const T*>(vin1);
+        const float* in2 = reinterpret_cast<const float*>(vin2);
+        T* out = reinterpret_cast<T*>(vout);
+        for (size_t i=0; i<r; ++i) {
+          for (size_t j=0; j<c; ++j) {
+            out[i*c + j] = in1[i*c+j] + static_cast<T>(in2[j]);
+          }
+        }
+      }
+
+      void op_add(
+        const size_t r, const size_t c,
+        const void* vin1, const void* vin2, void* vout,
+        const inference::DataType typ)
+      {
+        switch(typ)
+        {
+        case inference::DataType::TYPE_BOOL:
+          op_add<bool>(r, c, vin1, vin2, vout);
+          break;
+        case inference::DataType::TYPE_FP32:
+          op_add<float>(r, c, vin1, vin2, vout);
+          break;
+        case inference::DataType::TYPE_FP16:
+          assert(0); // FP16 in C++ clientd is not supported yet
+          break;
+        case inference::DataType::TYPE_INT8:
+          op_add<int8_t>(r, c, vin1, vin2, vout);
+          break;
+        case inference::DataType::TYPE_INT32:
+          op_add<int32_t>(r, c, vin1, vin2, vout);
+          break;
+        }
+      }
+
+      template<typename T>
+      int compare_floating_tensors(
+        const int64_t tensor_len, const T* expected, const T* test,
+        float err_tol, const std::string err_prefix="")
+      {
+        for (int64_t i = 0; i < tensor_len; ++i) {
+          float diff = fabs(static_cast<float>(test[i] - expected[i]));
+          if (diff > err_tol) {
+            std::cerr << "FAILED!" << std::endl;
+            std::cerr << err_prefix << " idx " << i
+                      << " : expected " << expected[i]
+                      << " , got " << test[i]
+                      << " , tolerance = " << err_tol
+                      << std::endl;
+            return 1;
+          }
+        }
+        return 0;
+      }
+
+      template<typename T>
+      int compare_tensors(
+        const int64_t tensor_len, const T* expected, const T* test,
+        const std::string err_prefix="")
+      {
+        for (int64_t i = 0; i < tensor_len; ++i) {
+          if (test[i] != expected[i]) {
+            std::cerr << "FAILED!" << std::endl;
+            std::cerr << err_prefix << " : expected " << expected[i]
+                      << " , got " << test[i] << std::endl;
+            return 1;
+          }
+        }
+        return 0;
+      }
+
+      template<>
+      int compare_tensors(
+        const int64_t tensor_len, const float* expected, const float* test,
+        const std::string err_prefix)
+      {
+        const float err_tol = 1e-4; // some guess for now
+        return compare_floating_tensors<float>(
+                tensor_len, expected, test, err_tol, err_prefix);
+      }
+
+      int compare_tensors(
+        const int64_t tensor_len,
+        const inference::DataType typ,
+        const void* expected, const void* test,
+        const std::string err_prefix="")
+      {
+        switch(typ)
+        {
+        case inference::DataType::TYPE_BOOL:
+          return compare_tensors<bool>(tensor_len,
+            reinterpret_cast<const bool*>(expected),
+            reinterpret_cast<const bool*>(test), err_prefix);
+        case inference::DataType::TYPE_FP32:
+          return compare_tensors<float>(tensor_len,
+            reinterpret_cast<const float*>(expected),
+            reinterpret_cast<const float*>(test), err_prefix);
+        case inference::DataType::TYPE_FP16:
+          assert(0); // FP16 in C++ clientd is not supported yet
+          return -1;
+        case inference::DataType::TYPE_INT8:
+          return compare_tensors<int8_t>(tensor_len,
+            reinterpret_cast<const int8_t*>(expected),
+            reinterpret_cast<const int8_t*>(test), err_prefix);
+        case inference::DataType::TYPE_INT32:
+          return compare_tensors<int32_t>(tensor_len,
+            reinterpret_cast<const int32_t*>(expected),
+            reinterpret_cast<const int32_t*>(test), err_prefix);
+        }
+        return -1;
+      }
+
+      template<typename T>
+      void init_tensor(
+        const size_t tensor_size,
+        const int seq_idx, const int seg_idx,
+        void* vdata)
+      {
+        T* input_values = reinterpret_cast<T*>(vdata);
+        for (size_t j = 0; j < tensor_size; ++j) {
+          input_values[j] = j + seg_idx * 100 + seq_idx * 1000;
+        }
+      }
+
+      void init_tensor(
+        const size_t tensor_size,
+        const int seq_idx, const int seg_idx,
+        void* vdata,
+        const inference::DataType typ)
+      {
+        switch(typ)
+        {
+        case inference::DataType::TYPE_BOOL:
+          init_tensor<bool>(tensor_size, seq_idx, seg_idx, vdata);
+          break;
+        case inference::DataType::TYPE_FP32:
+          init_tensor<float>(tensor_size, seq_idx, seg_idx, vdata);
+          break;
+        case inference::DataType::TYPE_FP16:
+          assert(0); // FP16 in C++ clientd is not supported yet
+          break;
+        case inference::DataType::TYPE_INT8:
+          init_tensor<int8_t>(tensor_size, seq_idx, seg_idx, vdata);
+          break;
+        case inference::DataType::TYPE_INT32:
+          init_tensor<int32_t>(tensor_size, seq_idx, seg_idx, vdata);
+          break;
         }
       }
     } // namespace utils

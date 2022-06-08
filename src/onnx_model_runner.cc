@@ -82,6 +82,11 @@
     }                                                                \
   } while (false)
 
+#define __FILENAME__                                                 \
+  (__builtin_strrchr(__FILE__, '/') ?                                \
+    __builtin_strrchr(__FILE__, '/') + 1 : __FILE__)
+#define MY_LOG(strm) (strm << "[" << __FILENAME__ << ":" << __LINE__ << "] ")
+
 // ORT helper function to check for status
 static inline std::string
 CheckOrtStatus(OrtStatus* status)
@@ -160,6 +165,21 @@ guarded_resizeAll(
   }
 }
 
+static inline void
+guarded_resizeAll(
+    std::unique_ptr<samplesCommon::ManagedBufferInternal>& buffer, const nvinfer1::Dims& dim,
+    const bool use_gpu)
+{
+  try {
+    buffer->resizeAll(dim, use_gpu);
+  }
+  catch (const std::exception& e) {
+    std::cerr << "ERROR: Couldn't allocate memory for input/output tensors. "
+              << e.what() << '\n';
+    throw;
+  }
+}
+
 // Prepares the model for inference by creating an execution context and
 // allocating buffers.
 //
@@ -208,7 +228,7 @@ TrtOnnxModel::Prepare(
     buffer_config.alloc_threshold <= buffer_config.initial_buffer_size,
     "Initial buffer size cannot be smaller than allocation threshold.");
   if (buffer_config.dealloc_threshold <= buffer_config.alloc_threshold) {
-    info_ss << "WARNING: Deallocation threshold should"
+    MY_LOG(info_ss) << "WARNING: Deallocation threshold should"
             << " be larger than allocation threshold." << std::endl;
   }
 
@@ -223,7 +243,7 @@ TrtOnnxModel::Prepare(
   mMaxChunks = std::max(mMaxChunks, 1);
   mBufferConfig.max_connections = mBufferConfig.initial_buffer_size +
                           (mMaxChunks-1)*mBufferConfig.subsequent_buffer_size;
-  info_ss << "Maximum connections allowed in the backend: "
+  MY_LOG(info_ss) << "Ajusted maximum connections allowed in the backend: "
           << mBufferConfig.max_connections
           << std::endl;
   mNumChunks = 1; // always start with only 1 chunk
@@ -311,7 +331,7 @@ TrtOnnxModel::Prepare(
 
   //*************************************************************************
   // Create session and load model into memory
-  verbose_ss << "Using Onnxruntime C++ API, initializing on device = " << mGpuId
+  MY_LOG(verbose_ss) << "Using Onnxruntime C++ API, initializing on device = " << mGpuId
              << std::endl;
   mSession.reset(new Ort::Session(*mEnv, model_path.c_str(), session_options));
   Ort::AllocatorWithDefaultOptions allocator;
@@ -323,9 +343,9 @@ TrtOnnxModel::Prepare(
   std::string producer_name(metadata.GetProducerName(allocator));
   std::string graph_name(metadata.GetGraphName(allocator));
   std::string description(metadata.GetDescription(allocator));
-  verbose_ss << "Producer name = " << producer_name << std::endl;
-  verbose_ss << "Graph name = " << graph_name << std::endl;
-  verbose_ss << "Description = " << description << std::endl;
+  MY_LOG(verbose_ss) << "Producer name = " << producer_name << std::endl;
+  MY_LOG(verbose_ss) << "Graph name = " << graph_name << std::endl;
+  MY_LOG(verbose_ss) << "Description = " << description << std::endl;
   if (state_pairs.empty()) {
     std::string graph_desc(metadata.GetGraphDescription(allocator));
     RETURN_IF_FALSE(
@@ -345,7 +365,7 @@ TrtOnnxModel::Prepare(
         "Error while reading the state tensors");
   }
 
-  verbose_ss << "Read " << input_state_names.size()
+  MY_LOG(verbose_ss) << "Read " << input_state_names.size()
              << " state vectors from the description file " << std::endl;
   RETURN_IF_FALSE(
       input_state_names.size() > 0, "Could not find any state tensors");
@@ -355,7 +375,7 @@ TrtOnnxModel::Prepare(
                                   OrtMemTypeDefault};
 
   size_t num_input_nodes = mSession->GetInputCount();
-  verbose_ss << "Number of inputs = " << num_input_nodes << std::endl;
+  MY_LOG(verbose_ss) << "Number of inputs = " << num_input_nodes << std::endl;
   std::string trtexec_string("trtexec --onnx=");
   trtexec_string.append(model_path);
   trtexec_string.append(" --fp16 --explicitBatch --workspace=8192");
@@ -378,10 +398,10 @@ TrtOnnxModel::Prepare(
     // print input shapes/dims
     size_t num_dims = tensor_info.GetDimensionsCount();
 
-    verbose_ss << "Input " << i << std::endl;
-    verbose_ss << "    Name = " << input_name << std::endl;
-    verbose_ss << "    type = " << type << std::endl;
-    verbose_ss << "    num_dims = " << num_dims << std::endl;
+    MY_LOG(verbose_ss) << "Input " << i << std::endl;
+    MY_LOG(verbose_ss) << "    Name = " << input_name << std::endl;
+    MY_LOG(verbose_ss) << "    type = " << type << std::endl;
+    MY_LOG(verbose_ss) << "    num_dims = " << num_dims << std::endl;
 
     std::vector<int64_t> input_node_dims = tensor_info.GetShape();
     nvinfer1::Dims dimsMin;
@@ -389,7 +409,7 @@ TrtOnnxModel::Prepare(
     dimsMax.nbDims = num_dims;
     size_t dynamic_dim = INVALID_DIM;
     for (size_t j = 0; j < num_dims; j++) {
-      verbose_ss << "    dim " << j << " = " << input_node_dims[j] << std::endl;
+      MY_LOG(verbose_ss) << "    dim " << j << " = " << input_node_dims[j] << std::endl;
       dimsMax.d[j] = input_node_dims[j];
       if (input_node_dims[j] == -1)
         dynamic_dim = j;
@@ -416,11 +436,14 @@ TrtOnnxModel::Prepare(
       dimsMin.d[triton_tensor->batch_dim] = min_pref_batch;
 
       input_tensor_size = samplesCommon::volume(dimsMax);
+      nvinfer1::DataType trt_type = OrtTensorInfo::GetTrtType(type);
+      mInputs[triton_tensor->idx].reset(
+        new samplesCommon::ManagedBufferInternal{trt_type, trt_type});
       guarded_resizeAll(mInputs[triton_tensor->idx], dimsMax, mUseGpu);
-      verbose_ss << "Set dims:" << dimsMax
+      MY_LOG(verbose_ss) << "Set dims:" << dimsMax
                  << ", tensor size = " << input_tensor_size << std::endl;
 
-      mOrtTensors[input_name_str] = {mInputs[triton_tensor->idx].data(mUseGpu),
+      mOrtTensors[input_name_str] = {mInputs[triton_tensor->idx]->data(mUseGpu),
                                      input_node_dims,
                                      num_dims,
                                      triton_tensor->batch_dim,
@@ -445,7 +468,7 @@ TrtOnnxModel::Prepare(
       dimsMin.d[0] = min_pref_batch;
 
       guarded_resizeAll(mInputReset, dimsMax, mUseGpu);
-      verbose_ss << "Set dims:" << dimsMax
+      MY_LOG(verbose_ss) << "Set dims:" << dimsMax
                  << ", tensor size = " << input_tensor_size << std::endl;
 
       mOrtTensors[input_name_str] = {mInputReset.data(mUseGpu),
@@ -481,7 +504,7 @@ TrtOnnxModel::Prepare(
           input_state_names[state_idx], output_state_names[state_idx],
           mStates.back()->data(mUseGpu), dimsMax, nvinfer1::DataType::kFLOAT,
           batch_dim);
-      verbose_ss << "Set dims:" << dimsMax
+      MY_LOG(verbose_ss) << "Set dims:" << dimsMax
                  << ", tensor size = " << input_tensor_size << std::endl;
       mOrtTensors[input_name_str] = {mStates.back()->data(mUseGpu),
                                      input_node_dims,
@@ -503,7 +526,7 @@ TrtOnnxModel::Prepare(
 
   size_t num_overridable_init_nodes =
       mSession->GetOverridableInitializerCount();
-  verbose_ss << "Number of overridable initializers = "
+  MY_LOG(verbose_ss) << "Number of overridable initializers = "
              << num_overridable_init_nodes << std::endl;
 
   for (size_t i = 0; i < num_overridable_init_nodes; i++) {
@@ -518,10 +541,10 @@ TrtOnnxModel::Prepare(
     // print input shapes/dims
     size_t num_dims = tensor_info.GetDimensionsCount();
 
-    verbose_ss << "Input " << i << std::endl;
-    verbose_ss << "    Name = " << input_name << std::endl;
-    verbose_ss << "    type = " << type << std::endl;
-    verbose_ss << "    num_dims = " << num_dims << std::endl;
+    MY_LOG(verbose_ss) << "Input " << i << std::endl;
+    MY_LOG(verbose_ss) << "    Name = " << input_name << std::endl;
+    MY_LOG(verbose_ss) << "    type = " << type << std::endl;
+    MY_LOG(verbose_ss) << "    num_dims = " << num_dims << std::endl;
 
     std::vector<int64_t> input_node_dims = tensor_info.GetShape();
     nvinfer1::Dims dimsMin;
@@ -529,7 +552,7 @@ TrtOnnxModel::Prepare(
     dimsMax.nbDims = num_dims;
     size_t dynamic_dim = INVALID_DIM;
     for (size_t j = 0; j < num_dims; j++) {
-      verbose_ss << "    dim " << j << " = " << input_node_dims[j] << std::endl;
+      MY_LOG(verbose_ss) << "    dim " << j << " = " << input_node_dims[j] << std::endl;
       dimsMax.d[j] = input_node_dims[j];
       if (input_node_dims[j] == -1)
         dynamic_dim = j;
@@ -558,11 +581,14 @@ TrtOnnxModel::Prepare(
       dimsMin.d[triton_tensor->batch_dim] = min_pref_batch;
 
       input_tensor_size = samplesCommon::volume(dimsMax);
+      nvinfer1::DataType trt_type = OrtTensorInfo::GetTrtType(type);
+      mInputs[triton_tensor->idx].reset(
+        new samplesCommon::ManagedBufferInternal{trt_type, trt_type});
       guarded_resizeAll(mInputs[triton_tensor->idx], dimsMax, mUseGpu);
-      verbose_ss << "Set dims:" << dimsMax
+      MY_LOG(verbose_ss) << "Set dims:" << dimsMax
                  << ", tensor size = " << input_tensor_size << std::endl;
 
-      mOrtTensors[input_name_str] = {mInputs[triton_tensor->idx].data(mUseGpu),
+      mOrtTensors[input_name_str] = {mInputs[triton_tensor->idx]->data(mUseGpu),
                                      input_node_dims,
                                      num_dims,
                                      triton_tensor->batch_dim,
@@ -587,7 +613,7 @@ TrtOnnxModel::Prepare(
       dimsMin.d[0] = min_pref_batch;
 
       guarded_resizeAll(mInputReset, dimsMax, mUseGpu);
-      verbose_ss << "Set dims:" << dimsMax
+      MY_LOG(verbose_ss) << "Set dims:" << dimsMax
                  << ", tensor size = " << input_tensor_size << std::endl;
 
       mOrtTensors[input_name_str] = {mInputReset.data(mUseGpu),
@@ -623,7 +649,7 @@ TrtOnnxModel::Prepare(
           input_state_names[state_idx], output_state_names[state_idx],
           mStates.back()->data(mUseGpu), dimsMax, nvinfer1::DataType::kFLOAT,
           batch_dim);
-      verbose_ss << "Set dims:" << dimsMax
+      MY_LOG(verbose_ss) << "Set dims:" << dimsMax
                  << ", tensor size = " << input_tensor_size << std::endl;
       mOrtTensors[input_name_str] = {mStates.back()->data(mUseGpu),
                                      input_node_dims,
@@ -640,7 +666,7 @@ TrtOnnxModel::Prepare(
 
 
   size_t num_output_nodes = mSession->GetOutputCount();
-  verbose_ss << "Number of outputs = " << num_output_nodes << std::endl;
+  MY_LOG(verbose_ss) << "Number of outputs = " << num_output_nodes << std::endl;
   std::vector<std::pair<std::string, void*>> matchingOutputStates{};
 
   for (size_t i = 0; i < num_output_nodes; i++) {
@@ -654,10 +680,10 @@ TrtOnnxModel::Prepare(
     // print input shapes/dims
     size_t num_dims = tensor_info.GetDimensionsCount();
 
-    verbose_ss << "Output " << i << std::endl;
-    verbose_ss << "    Name = " << output_name << std::endl;
-    verbose_ss << "    type = " << type << std::endl;
-    verbose_ss << "    num_dims = " << num_dims << std::endl;
+    MY_LOG(verbose_ss) << "Output " << i << std::endl;
+    MY_LOG(verbose_ss) << "    Name = " << output_name << std::endl;
+    MY_LOG(verbose_ss) << "    type = " << type << std::endl;
+    MY_LOG(verbose_ss) << "    num_dims = " << num_dims << std::endl;
 
     std::vector<int64_t> output_node_dims = tensor_info.GetShape();
     nvinfer1::Dims dimsMin;
@@ -665,7 +691,7 @@ TrtOnnxModel::Prepare(
     dimsMax.nbDims = num_dims;
     size_t dynamic_dim = INVALID_DIM;
     for (size_t j = 0; j < num_dims; j++) {
-      verbose_ss << "    dim " << j << " = " << output_node_dims[j]
+      MY_LOG(verbose_ss) << "    dim " << j << " = " << output_node_dims[j]
                  << std::endl;
       dimsMax.d[j] = output_node_dims[j];
       if (output_node_dims[j] == -1)
@@ -693,21 +719,24 @@ TrtOnnxModel::Prepare(
       dimsMin.d[triton_tensor->batch_dim] = min_pref_batch;
 
       size_t output_tensor_size = samplesCommon::volume(dimsMax);
-      verbose_ss << "    Set dims:" << dimsMax
+      MY_LOG(verbose_ss) << "    Set dims:" << dimsMax
                  << ", tensor size = " << output_tensor_size << std::endl;
 
+      nvinfer1::DataType trt_type = OrtTensorInfo::GetTrtType(type);
+      mOutputs[triton_tensor->idx].reset(
+        new samplesCommon::ManagedBufferInternal{trt_type, trt_type});
       guarded_resizeAll(mOutputs[triton_tensor->idx], dimsMax, mUseGpu);
-      verbose_ss << "Resize all finished" << std::endl;
+      MY_LOG(verbose_ss) << "Resize all finished" << std::endl;
 
       mOrtTensors[output_name_str] = {
-          mOutputs[triton_tensor->idx].data(mUseGpu),
+          mOutputs[triton_tensor->idx]->data(mUseGpu),
           output_node_dims,
           num_dims,
           triton_tensor->batch_dim,
           0,
           triton_tensor->type_size,
           type};
-      verbose_ss << "Ort tensor is set  " << std::endl;
+      MY_LOG(verbose_ss) << "Ort tensor is set  " << std::endl;
       mNumOutputs++;
     } else {
       int state_idx = StateTensor::GetIdx(output_name_str, output_state_names);
@@ -734,7 +763,7 @@ TrtOnnxModel::Prepare(
       matchingOutputStates.emplace_back(
           output_name_str, mStates.back()->data(mUseGpu));
 
-      verbose_ss << "    Set dims:" << dimsMax
+      MY_LOG(verbose_ss) << "    Set dims:" << dimsMax
                  << ", tensor size = " << output_tensor_size << std::endl;
       mOrtTensors[output_name_str] = {mStates.back()->data(mUseGpu),
                                       output_node_dims,
@@ -749,11 +778,11 @@ TrtOnnxModel::Prepare(
     // append_to_trtexec_string(trtexec_min_string, output_name_str, dimsMin);
   }
 
-  verbose_ss << "Reading output tensors is finished " << std::endl;
-  verbose_ss << "String for testing with trtexec min shape:" << std::endl;
-  verbose_ss << trtexec_min_string << std::endl;
-  verbose_ss << "String for testing with trtexec max shape:" << std::endl;
-  verbose_ss << trtexec_max_string << std::endl;
+  MY_LOG(verbose_ss) << "Reading output tensors is finished " << std::endl;
+  MY_LOG(verbose_ss) << "String for testing with trtexec min shape:" << std::endl;
+  MY_LOG(verbose_ss) << trtexec_min_string << std::endl;
+  MY_LOG(verbose_ss) << "String for testing with trtexec max shape:" << std::endl;
+  MY_LOG(verbose_ss) << trtexec_max_string << std::endl;
 
   trtexec_string.append(" --minShapes=");
   trtexec_string.append(
@@ -764,11 +793,11 @@ TrtOnnxModel::Prepare(
   trtexec_string.append(" --optShapes=");
   trtexec_string.append(
       trtexec_max_string.substr(0, trtexec_max_string.length() - 1));
-  verbose_ss << "trtexec string:" << std::endl;
-  verbose_ss << trtexec_string << std::endl;
+  MY_LOG(verbose_ss) << "trtexec string:" << std::endl;
+  MY_LOG(verbose_ss) << trtexec_string << std::endl;
 
   for (auto& iTensor : mOrtTensors) {
-    verbose_ss << "Tensor Name: " << iTensor.first << std::endl;
+    MY_LOG(verbose_ss) << "Tensor Name: " << iTensor.first << std::endl;
     iTensor.second.Print(verbose_ss);
     verbose_ss << std::endl;
   }
@@ -791,7 +820,7 @@ TrtOnnxModel::Prepare(
     }
   }
 
-  verbose_ss << "State Tensors " << std::endl;
+  MY_LOG(verbose_ss) << "State Tensors " << std::endl;
   for (const auto& iTensor : mStateTensors) {
     iTensor.printStateTensors(verbose_ss);
     verbose_ss << std::endl;
@@ -826,7 +855,7 @@ TrtOnnxModel::Prepare(
              j < mStateTensors[i].mDim.nbDims; ++j)
           mBufferSizeYHost[i] *= mStateTensors[i].mDim.d[j];
 
-        verbose_ss << "State tensor = " << mStateTensors[i].mInputName
+        MY_LOG(verbose_ss) << "State tensor = " << mStateTensors[i].mInputName
                    << ", SizeX = " << mBufferSizeXHost[i]
                    << ", SizeY = " << mBufferSizeYHost[i] << std::endl;
       }
@@ -889,39 +918,39 @@ TrtOnnxModel::Prepare(
 
   // make warmup runs to initialize the engines (crucial for all dims for TRT)
   {
-    verbose_ss << "Warmup run for batch = " << mBatchDimMax << std::endl;
+    MY_LOG(verbose_ss) << "Warmup run for batch = " << mBatchDimMax << std::endl;
     double start = get_time_msec();
     Ort::IoBinding bindings(*mSession);
     setBindings(mBatchDimMax, bindings);
     mSession->Run(mRunOptions, bindings);
     double end = get_time_msec();
-    verbose_ss << "Time required to run: " << (end - start) << " milliseconds"
+    MY_LOG(verbose_ss) << "Time required to run: " << (end - start) << " milliseconds"
                 << std::endl;
   }
 
   // no need to generate batch=1 engine if we always padd to preferred batch
   // sizes
   if (mPaddBatchSize == false) {
-    verbose_ss << "Warmup run for batch = " << mBatchDimMin << std::endl;
+    MY_LOG(verbose_ss) << "Warmup run for batch = " << mBatchDimMin << std::endl;
     double start = get_time_msec();
     Ort::IoBinding bindings(*mSession);
     setBindings(mBatchDimMin, bindings);
     mSession->Run(mRunOptions, bindings);
     double end = get_time_msec();
-    verbose_ss << "Time required to run: " << (end - start) << " milliseconds"
+    MY_LOG(verbose_ss) << "Time required to run: " << (end - start) << " milliseconds"
                 << std::endl;
   }
 
   std::sort(std::begin(mPreferredBatchSizes), std::end(mPreferredBatchSizes));
   for (int64_t pref_batch : mPreferredBatchSizes) {
     if (pref_batch == mBatchDimMax) continue; // already ran max batch
-    verbose_ss << "Warmup run for batch = " << pref_batch << std::endl;
+    MY_LOG(verbose_ss) << "Warmup run for batch = " << pref_batch << std::endl;
     double start = get_time_msec();
     Ort::IoBinding bindings(*mSession);
     setBindings(pref_batch, bindings);
     mSession->Run(mRunOptions, bindings);
     double end = get_time_msec();
-    verbose_ss << "Time required to run: " << (end - start) << " milliseconds"
+    MY_LOG(verbose_ss) << "Time required to run: " << (end - start) << " milliseconds"
                 << std::endl;
   }
 
@@ -1018,7 +1047,7 @@ TrtOnnxModel::prepareDeviceStoreIds(
   }
   // We must delete the timed-out sequences first to make room for new sequences
   for (auto& corrId : mCorrIdToDelete) {
-    verbose_ss << "Timeout ocurred for CorrID : " << corrId << std::endl;
+    MY_LOG(verbose_ss) << "Timeout ocurred for CorrID : " << corrId << std::endl;
     clearStates(corrId);
   }
   mCorrIdToDelete.clear();  // resets size but not capacity
@@ -1053,7 +1082,7 @@ TrtOnnxModel::prepareDeviceStoreIds(
       mStoreIdHost[i*2] = chunk_id;
       mStoreIdHost[i*2+1] = idx_to_use;
 #ifdef VERBOSE_STORAGE_ACTIVITY
-      verbose_ss << "Assigning new index for storage: chunk=" 
+      MY_LOG(verbose_ss) << "Assigning new index for storage: chunk=" 
                  << mStoreIdHost[i*2] << " idx=" << mStoreIdHost[i*2+1]
                  << std::endl;
 #endif
@@ -1062,7 +1091,7 @@ TrtOnnxModel::prepareDeviceStoreIds(
       mStoreIdHost[i*2] = std::get<0>(foundId->second);
       mStoreIdHost[i*2+1] = std::get<1>(foundId->second);
 #ifdef VERBOSE_STORAGE_ACTIVITY
-      verbose_ss << "Found old index for storage: chunk=" 
+      MY_LOG(verbose_ss) << "Found old index for storage: chunk=" 
                  << mStoreIdHost[i*2] << " idx=" << mStoreIdHost[i*2+1]
                  << std::endl;
 #endif
@@ -1252,18 +1281,18 @@ TrtOnnxModel::report_time(log_stream_t& verbose_ss, log_stream_t& info_ss)
   if (mMetricLoggingFreqSeconds > 0  // is logging enabled
       && DURATION(curTimeStamp - lastLogTimeStamp).count() >=
              mMetricLoggingFreqSeconds) {
-    verbose_ss << "Host preprocessing: " << mHostPreTime << std::endl;
-    verbose_ss << "Host post-processing: " << mHostPostTime << std::endl;
-    verbose_ss << "Device preprocessing: " << mDevicePreTime << std::endl;
-    verbose_ss << "Device post-processing: " << mDevicePostTime << std::endl;
-    verbose_ss << "Device exe time: " << mDeviceExeTime << std::endl;
+    MY_LOG(verbose_ss) << "Host preprocessing: " << mHostPreTime << std::endl;
+    MY_LOG(verbose_ss) << "Host post-processing: " << mHostPostTime << std::endl;
+    MY_LOG(verbose_ss) << "Device preprocessing: " << mDevicePreTime << std::endl;
+    MY_LOG(verbose_ss) << "Device post-processing: " << mDevicePostTime << std::endl;
+    MY_LOG(verbose_ss) << "Device exe time: " << mDeviceExeTime << std::endl;
     double totalTime = mHostPreTime + mHostPostTime + mDevicePreTime +
                        mDevicePostTime + mDeviceExeTime;
-    verbose_ss << "Total exe time: " << totalTime << std::endl;
-    verbose_ss << "Batch size sum: " << mBatchSizeSum << std::endl;
-    verbose_ss << "Number of Inference calls: " << mNumInferCalls << std::endl;
+    MY_LOG(verbose_ss) << "Total exe time: " << totalTime << std::endl;
+    MY_LOG(verbose_ss) << "Batch size sum: " << mBatchSizeSum << std::endl;
+    MY_LOG(verbose_ss) << "Number of Inference calls: " << mNumInferCalls << std::endl;
     verbose_ss << std::endl;
-    info_ss << "Average Batch Size: "
+    MY_LOG(info_ss) << "Average Batch Size: "
             << static_cast<double>(mBatchSizeSum) / mNumInferCalls
             << ", Max Batch Size: " << mMaxExecBatchSize << std::endl;
     mHostPreTime = 0.;
@@ -1283,7 +1312,7 @@ TrtOnnxModel::AllocateNewChunk(log_stream_t& verbose_ss, log_stream_t& info_ss)
 {
   const int chunkId = mNumChunks;
   auto& newChunk = mStoredStates[chunkId];
-  info_ss << "Allocating new chunk ... # " << chunkId << std::endl;
+  MY_LOG(info_ss) << "Allocating new chunk ... # " << chunkId << std::endl;
   mStorageBufferHost[chunkId].resize(mNumStates);
   for (int i = 0; i < mNumStates; ++i) {
     auto& iTensor = mStateTensors[i];
@@ -1309,7 +1338,7 @@ TrtOnnxModel::AllocateNewChunk(log_stream_t& verbose_ss, log_stream_t& info_ss)
   for (int i = 0; i < mBufferConfig.subsequent_buffer_size; ++i)
     mStoreAvailableIds[chunkId].insert(mStoreAvailableIds[chunkId].end(), i);
   mNumChunks++;
-  info_ss << "Allocating new chunk ... # " << chunkId << " [DONE]" << std::endl;
+  MY_LOG(info_ss) << "Allocating new chunk ... # " << chunkId << " [DONE]" << std::endl;
   return std::string();
 }
 
@@ -1317,7 +1346,7 @@ std::string
 TrtOnnxModel::DeAllocateChunk(log_stream_t& verbose_ss, log_stream_t& info_ss)
 {
   const int chunkId = mNumChunks - 1;
-  info_ss << "DeAllocating chunk ... # " << chunkId << std::endl;
+  MY_LOG(info_ss) << "DeAllocating chunk ... # " << chunkId << std::endl;
   // remove the references first
   for (int i = 0; i < mNumStates; ++i) {
     mStateTensors[i].mStoreBuffer[chunkId] = nullptr;
@@ -1332,7 +1361,7 @@ TrtOnnxModel::DeAllocateChunk(log_stream_t& verbose_ss, log_stream_t& info_ss)
   mStoredStates[chunkId].clear();
   mStoreAvailableIds[chunkId].clear();
   mNumChunks--;
-  info_ss << "DeAllocating chunk ... # " << chunkId << " [DONE]" << std::endl;
+  MY_LOG(info_ss) << "DeAllocating chunk ... # " << chunkId << " [DONE]" << std::endl;
   return std::string();
 }
 
@@ -1344,16 +1373,16 @@ TrtOnnxModel::TryAndDeAllocateChunk(
     // we cannot deallocate the first chunk
     return std::string("Cannot delete the first chunk.");
   }
-  info_ss << "Checking if we can deallocate the last chunk ... " << std::endl;
+  MY_LOG(info_ss) << "Checking if we can deallocate the last chunk ... " << std::endl;
   // Only check the last chunk, if it is completely free, deallocate it
-  info_ss << "Number of chunks: " << mNumChunks << std::endl;
-  verbose_ss << "Free slots: ";
+  MY_LOG(info_ss) << "Number of chunks: " << mNumChunks << std::endl;
+  MY_LOG(verbose_ss) << "Free slots: ";
   for (int i=0; i<mNumChunks; ++i) {
     verbose_ss << mStoreAvailableIds[i].size() << ",";
   }
   verbose_ss << std::endl;
   size_t freeSlots = mStoreAvailableIds[mNumChunks-1].size();
-  info_ss << "Free slots in last chunk: " << freeSlots << std::endl;
+  MY_LOG(info_ss) << "Free slots in last chunk: " << freeSlots << std::endl;
   if (freeSlots == static_cast<size_t>(mBufferConfig.subsequent_buffer_size)) {
     // buffer is completely free, so we can safely deallocate
     return DeAllocateChunk(verbose_ss, info_ss);
@@ -1403,7 +1432,7 @@ TrtOnnxModel::InferTasks(
   mBatchSizeSum += batchSize;
 
 #ifdef VERBOSE_OUTPUT
-  verbose_ss << "Using padded batch size = " << padded_batch_size << std::endl;
+  MY_LOG(verbose_ss) << "Using padded batch size = " << padded_batch_size << std::endl;
 #endif
 
   capture_time(mDevicePreTime, 0, batchSize);
@@ -1421,8 +1450,8 @@ TrtOnnxModel::InferTasks(
   int counter_input = 0;
   for (const auto& itensor : mInputTritonTensorInfo) {
 #ifdef VERBOSE_OUTPUT
-    verbose_ss << "Input tensor properties: ";
-    verbose_ss << itensor.type_size << ", " << itensor.sizeX << ", "
+    MY_LOG(verbose_ss) << "Input tensor properties: ";
+    MY_LOG(verbose_ss) << itensor.type_size << ", " << itensor.sizeX << ", "
                << itensor.sizeY << std::endl;
 #endif
     for (int j = 0; j < batchSize; ++j) {
@@ -1431,7 +1460,7 @@ TrtOnnxModel::InferTasks(
                                     inferenceTasks[j].mInput[itensor.idx]) +
                                 ix * itensor.sizeY * itensor.type_size;
         char* pInputDst =
-            reinterpret_cast<char*>(mInputs[counter_input].hostBuffer.data()) +
+            reinterpret_cast<char*>(mInputs[counter_input]->hostBuffer.data()) +
             (ix * itensor.sizeY * padded_batch_size + j * itensor.sizeY) *
                 itensor.type_size;
         memcpy(pInputDst, pInputSrc, itensor.type_size * itensor.sizeY);
@@ -1445,7 +1474,7 @@ TrtOnnxModel::InferTasks(
   if (mUseGpu) {
     for (int i = 0; i < mNumInputs; ++i) {
       RETURN_IF_CUDA_ERROR(cudaMemcpyAsync(
-          mInputs[i].deviceBuffer.data(), mInputs[i].hostBuffer.data(),
+          mInputs[i]->deviceBuffer.data(), mInputs[i]->hostBuffer.data(),
           mInputTritonTensorInfo[i].vol * padded_batch_size *
               mInputTritonTensorInfo[i].type_size,
           cudaMemcpyHostToDevice, mCudaStreamCpy));
@@ -1454,20 +1483,20 @@ TrtOnnxModel::InferTasks(
 
 
 #ifdef VERBOSE_OUTPUT
-  verbose_ss << "Input Reset: ";
+  MY_LOG(verbose_ss) << "Input Reset: ";
 #endif
   bool* inputResetData = static_cast<bool*>(mInputReset.hostBuffer.data());
   for (int i = 0; i < padded_batch_size; ++i) {
     if (i < batchSize) {
       inputResetData[i] = (inferenceTasks[i].mStart != 0);
       if (inputResetData[i] && mLogResetSequence) {
-        info_ss << "Resetting input for sequence # "
+        MY_LOG(info_ss) << "Resetting input for sequence # "
                 << inferenceTasks[i].mCorrId << std::endl;
       }
     } else
       inputResetData[i] = true;
 #ifdef VERBOSE_OUTPUT
-    verbose_ss << inputResetData[i];
+    verbose_ss << inputResetData[i] << ", ";
 #endif
   }
 #ifdef VERBOSE_OUTPUT
@@ -1512,9 +1541,9 @@ TrtOnnxModel::InferTasks(
     for (int i = 0; i < mNumOutputs; ++i) {
       size_t cpySize = padded_batch_size * mOutputTritonTensorInfo[i].vol *
                        mOutputTritonTensorInfo[i].type_size;
-      verbose_ss << "Copy size = " << cpySize << std::endl;
+      MY_LOG(verbose_ss) << "Copy size = " << cpySize << std::endl;
       RETURN_IF_CUDA_ERROR(cudaMemcpyAsync(
-          mOutputs[i].hostBuffer.data(), mOutputs[i].deviceBuffer.data(),
+          mOutputs[i]->hostBuffer.data(), mOutputs[i]->deviceBuffer.data(),
           cpySize, cudaMemcpyDeviceToHost, mCudaStreamCpy));
     }
   }
@@ -1533,8 +1562,8 @@ TrtOnnxModel::InferTasks(
     int counter_output = 0;
     for (const auto& itensor : mOutputTritonTensorInfo) {
 #ifdef VERBOSE_OUTPUT
-      verbose_ss << "Output tensor properties: ";
-      verbose_ss << itensor.type_size << ", " << itensor.sizeX << ", "
+      MY_LOG(verbose_ss) << "Output tensor properties: ";
+      MY_LOG(verbose_ss) << itensor.type_size << ", " << itensor.sizeX << ", "
                 << itensor.sizeY << std::endl;
 #endif
       for (size_t ix = 0; ix < itensor.sizeX; ++ix) {
@@ -1543,7 +1572,7 @@ TrtOnnxModel::InferTasks(
             ix * itensor.sizeY * itensor.type_size;
         const char* pOutputSrc =
             reinterpret_cast<const char*>(
-                mOutputs[counter_output].hostBuffer.data()) +
+                mOutputs[counter_output]->hostBuffer.data()) +
             (ix * itensor.sizeY * padded_batch_size + j * itensor.sizeY) *
                 itensor.type_size;
         memcpy(pOutputDst, pOutputSrc, itensor.type_size * itensor.sizeY);
@@ -1566,7 +1595,7 @@ TrtOnnxModel::InferTasks(
       // the task with EndSequence signal finished successfully
       // release the storage buffer
       auto& corrId = inferenceTasks[i].mCorrId;
-      verbose_ss << "EndSequence received for CorrID : " << corrId << std::endl;
+      MY_LOG(verbose_ss) << "EndSequence received for CorrID : " << corrId << std::endl;
       clearStates(corrId);
     }
   }

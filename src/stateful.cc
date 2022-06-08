@@ -54,6 +54,7 @@ InitTritonTensorInfo(
     common::TritonJson::Value& tensor_values,
     std::vector<TritonTensorInfo>& tensor_infos, std::string& log)
 {
+  const int triton_type_offset = strlen("TYPE_");
   for (size_t i = 0; i < tensor_values.ArraySize(); ++i) {
     TritonTensorInfo triton_tensor;
     common::TritonJson::Value tensor;
@@ -63,6 +64,8 @@ InitTritonTensorInfo(
     RETURN_IF_ERROR(backend::ParseShape(tensor, "dims", &triton_tensor.shape));
     triton_tensor.idx = i;
     log = triton_tensor.Init();
+    triton_tensor.triton_type = static_cast<int>(TRITONSERVER_StringToDataType(
+                        triton_tensor.type.substr(triton_type_offset).c_str()));
     tensor_infos.push_back(triton_tensor);
   }
 
@@ -866,7 +869,7 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
 
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
-      (std::string("Max connectionss in the backend: ") +
+      (std::string("Tentative maximum connections allowed in the backend: ") +
        std::to_string(buffer_config.max_connections)).c_str());
 
   bool pad_to_max_batch = false;
@@ -913,6 +916,7 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
     instance_state->inference_tasks_.resize(model_state->max_batch_size_);
   }
   catch (const std::bad_alloc& e) {
+    std::cerr << ss_logs.str() << std::endl;
     return TRITONSERVER_ErrorNew(
         TRITONSERVER_ERROR_INTERNAL,
         "MEMORY ALLOCATION ERROR:: "
@@ -920,6 +924,7 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
         "max_candidate_sequences.");
   }
   catch (const std::exception& e) {
+    std::cerr << ss_logs.str() << std::endl;
     return TRITONSERVER_ErrorNew(TRITONSERVER_ERROR_UNKNOWN, e.what());
   }
 

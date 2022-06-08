@@ -154,8 +154,8 @@ PreProcessRequests(
           responses, r,
           TRITONBACKEND_ResponseOutput(
               response, &output, output_tensor.name.c_str(),
-              TRITONSERVER_TYPE_FP32, output_tensor.shape.data(),
-              output_tensor.shape.size()));
+              static_cast<TRITONSERVER_DataType>(output_tensor.triton_type),
+              output_tensor.shape.data(), output_tensor.shape.size()));
       if (responses[r] == nullptr) {
         LOG_MESSAGE(
             TRITONSERVER_LOG_ERROR,

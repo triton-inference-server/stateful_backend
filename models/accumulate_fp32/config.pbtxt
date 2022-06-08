@@ -19,7 +19,7 @@
 # IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-name: "accumulate"
+name: "accumulate_fp32"
 backend: "stateful"
 max_batch_size: 16
 sequence_batching {
@@ -82,7 +82,7 @@ output [
 parameters [
   {
     key: "onnx_file_name"
-    value: { string_value: "accumulate.onnx" }
+    value: { string_value: "accumulate_fp32.onnx" }
   },
   {
     key: "state_pairs"

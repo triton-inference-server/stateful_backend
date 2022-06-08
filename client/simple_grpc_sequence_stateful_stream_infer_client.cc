@@ -25,6 +25,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <memory>
 #include "grpc_client.h"
 
 #include "model_config_util.h"
@@ -42,11 +43,12 @@ static int STATE_DIM = 5;
 static std::mutex mutex_;
 static std::condition_variable cv_;
 
+
 namespace {
 
-std::vector<std::vector<std::vector<std::vector<float>>>>
+std::vector<std::vector<std::vector<std::shared_ptr<void>>>>
 simulate_model(
-    const std::vector<std::vector<std::vector<std::vector<float>>>>& input_data,
+    const std::vector<std::vector<std::vector<std::shared_ptr<void>>>>& input_data,
     const int num_sequence, const int num_segment)
 {
   /*
@@ -58,33 +60,40 @@ simulate_model(
         4. add the updated states to the original input which will be the final
      output
    */
-  std::vector<std::vector<std::vector<std::vector<float>>>> output(
+  std::vector<std::vector<std::vector<std::shared_ptr<void>>>> output(
       num_sequence,
-      std::vector<std::vector<std::vector<float>>>(
+      std::vector<std::vector<std::shared_ptr<void>>>(
         num_segment,
-        std::vector<std::vector<float>>(info.output_names.size())));
+        std::vector<std::shared_ptr<void>>(info.output_names.size())));
   std::vector<float> states(STATE_DIM);
   for (int seq_idx = 0; seq_idx < num_sequence; ++seq_idx) {
     // initialize the states
     for (int sti = 0; sti < STATE_DIM; ++sti) states[sti] = 0.0f;
 
     for (int seg_idx = 0; seg_idx < num_segment; ++seg_idx) {
-      output[seq_idx][seg_idx][0].resize(SEGMENT_LEN * STATE_DIM); // 1 out tnsr
-      for (int j = 0; j < STATE_DIM; ++j) {
-        float sum = states[j];
-        // Reduce
-        for (int i = 0; i < SEGMENT_LEN; ++i) {
-          sum += input_data[seq_idx][seg_idx][0][j + i*STATE_DIM];
-        }
-        // update states
-        states[j] = sum;
-        // calculate output
-        for (int i = 0; i < SEGMENT_LEN; ++i) {
-          output[seq_idx][seg_idx][0][j + i * STATE_DIM] =
-              states[j] +
-               input_data[seq_idx][seg_idx][0][j + i * STATE_DIM];
-        }
-      }
+      const size_t output_byte_size = info.output_vols[0]
+                      * stateful::client::utils::TypeSize(info.output_types[0]);
+      output[seq_idx][seg_idx][0] = std::shared_ptr<void>(malloc(output_byte_size), free);
+      stateful::client::utils::op_reduce_sum<0>(SEGMENT_LEN,
+              STATE_DIM, input_data[seq_idx][seg_idx][0].get(),
+              states.data(), info.output_types[0]);
+
+      // if (seq_idx == 0 && seg_idx == 0) {
+      //   std::cout << "States : " ;
+      //   for (auto f : states)
+      //     std::cout << f << ", ";
+      //   std::cout << std::endl;
+      // }
+      stateful::client::utils::op_add(SEGMENT_LEN, STATE_DIM,
+            input_data[seq_idx][seg_idx][0].get(), states.data(),
+            output[seq_idx][seg_idx][0].get(), info.output_types[0]);
+
+      // std::cout << seq_idx << "_"
+      //           << seg_idx <<" (OUT) :: ";
+      // int32_t* input_values = (int32_t*)output[seq_idx][seg_idx][0].get();
+      // for (int i=0; i<info.output_vols[0]; ++i)
+      //   std::cout << input_values[i] << ", ";
+      // std::cout << std::endl;
     }
   }
   return output;
@@ -116,7 +125,7 @@ Usage(char** argv, const std::string& msg = std::string())
 void
 StreamSend(
     const std::unique_ptr<tc::InferenceServerGrpcClient>& client,
-    const std::string& model_name, std::vector<std::vector<float>>& values,
+    const std::string& model_name, std::vector<std::shared_ptr<void>>& values,
     const uint64_t sequence_id,
     bool start_of_sequence, bool end_of_sequence, const int32_t index)
 {
@@ -152,13 +161,17 @@ main(int argc, char** argv)
   tc::Headers http_headers;
   int sequence_id_offset = 1;
   uint32_t stream_timeout = 0;
+  std::string model_name = "accumulate_fp32";
 
   // Parse commandline...
   int opt;
-  while ((opt = getopt(argc, argv, "vu:H:t:o:S:s:")) != -1) {
+  while ((opt = getopt(argc, argv, "vm:u:H:t:o:S:s:")) != -1) {
     switch (opt) {
       case 'v':
         verbose = true;
+        break;
+      case 'm':
+        model_name = optarg;
         break;
       case 'u':
         url = optarg;
@@ -189,10 +202,6 @@ main(int argc, char** argv)
 
   tc::Error err;
 
-  // We use the custom "sequence" model which takes 1 input value. The
-  // output is the accumulated value of the inputs. See
-  // src/custom/sequence.
-  std::string model_name = "accumulate";
   std::cout << "Using model: " << model_name << std::endl;
   std::cout << "Number of Sequences: " << NUM_SEQUENCE << std::endl;
   std::cout << "Number of Segments: " << NUM_SEGMENT << std::endl;
@@ -218,7 +227,7 @@ main(int argc, char** argv)
       break;
     }
   }
-  // std::cout << info.to_string() << std::endl;
+  std::cout << info.to_string() << std::endl;
 
   ResultList result_list;
 
@@ -236,28 +245,25 @@ main(int argc, char** argv)
       "unable to establish a streaming connection to server");
 
   // initialize input
-  std::vector<
-    std::vector<
-      std::vector<
-        std::vector<float>>>> input_data(
-          NUM_SEQUENCE,
-          std::vector<std::vector<std::vector<float>>>(
-            NUM_SEGMENT,
-            std::vector<std::vector<float>>(info.input_names.size())));
+  std::vector<std::vector<std::vector<std::shared_ptr<void>>>> input_data(
+    NUM_SEQUENCE, std::vector<std::vector<std::shared_ptr<void>>>(
+    NUM_SEGMENT, std::vector<std::shared_ptr<void>>(info.input_names.size())));
   for (int seg_idx = 0; seg_idx < NUM_SEGMENT; ++seg_idx) {
     for (int seq_idx = 0; seq_idx < NUM_SEQUENCE; ++seq_idx) {
       for (size_t i=0; i<info.input_names.size(); ++i) {
-        std::vector<float>& input_values = input_data[seq_idx][seg_idx][i];
-        size_t input_size = info.input_vols[i];
-        input_values.resize(input_size);
-        for (size_t j = 0; j < input_size; ++j) {
-          input_values[j] = j + seg_idx * 100 + seq_idx * 1000;
-        }
+        const size_t input_size = info.input_vols[i];
+        const size_t input_byte_size = input_size
+                      * stateful::client::utils::TypeSize(info.input_types[i]);
+        input_data[seq_idx][seg_idx][i] = std::shared_ptr<void>(malloc(input_byte_size), free);
+        stateful::client::utils::init_tensor(
+          input_size, seq_idx, seg_idx,
+          input_data[seq_idx][seg_idx][i].get(), info.input_types[i]);
 
         // std::cout << seq_idx+sequence_id_offset << "_"
         //           << seg_idx <<" (IN) :: ";
-        // for (auto f : input_values)
-        //   std::cout << f << ", ";
+        // int32_t* input_values = (int32_t*)input_data[seq_idx][seg_idx][i].get();
+        // for (int i=0; i<input_size; ++i)
+        //   std::cout << input_values[i] << ", ";
         // std::cout << std::endl;
       }
     }
@@ -316,11 +322,11 @@ main(int argc, char** argv)
   }
 
   // Extract data from the result
-  std::vector<std::vector<std::vector<std::vector<float>>>> output_data(
+  std::vector<std::vector<std::vector<std::shared_ptr<void>>>> output_data(
       NUM_SEQUENCE,
-      std::vector<std::vector<std::vector<float>>>(
+      std::vector<std::vector<std::shared_ptr<void>>>(
         NUM_SEGMENT,
-        std::vector<std::vector<float>>(info.output_names.size())));
+        std::vector<std::shared_ptr<void>>(info.output_names.size())));
   for (const auto& this_result : result_list) {
     auto err = this_result->RequestStatus();
     if (!err.IsOk()) {
@@ -349,22 +355,24 @@ main(int argc, char** argv)
     }
   }
 
-  std::vector<std::vector<std::vector<std::vector<float>>>> expected_output =
+  std::vector<std::vector<std::vector<std::shared_ptr<void>>>> expected_output =
       simulate_model(input_data, NUM_SEQUENCE, NUM_SEGMENT);
 
   for (int seq_idx = 0; seq_idx < NUM_SEQUENCE; ++seq_idx) {
     for (int seg_idx = 0; seg_idx < NUM_SEGMENT; ++seg_idx) {
-      int64_t output_size = info.output_vols[0];
-      for (int i = 0; i < output_size; ++i) {
-        if (output_data[seq_idx][seg_idx][0][i] !=
-            expected_output[seq_idx][seg_idx][0][i]) {
-          std::cerr << "FAILED!" << std::endl;
-          std::cerr << "Sequence " << sequence_ids[seq_idx] << " Segment "
-                    << seg_idx << " : expected "
-                    << expected_output[seq_idx][seg_idx][0][i] << " , got "
-                    << output_data[seq_idx][seg_idx][0][i] << std::endl;
-          return 1;
-        }
+      // only 1 tensor
+      const size_t output_size = info.output_vols[0];
+      const auto output_typ = info.output_types[0];
+      std::stringstream ss;
+      ss << "Sequence " << sequence_ids[seq_idx] << " Segment "
+                      << seg_idx << " ";
+      int err_code = stateful::client::utils::compare_tensors(
+                    output_size, output_typ,
+                    expected_output[seq_idx][seg_idx][0].get(),
+                    output_data[seq_idx][seg_idx][0].get(), ss.str());
+      if (err_code != 0)
+      {
+        return err_code;
       }
     }
   }

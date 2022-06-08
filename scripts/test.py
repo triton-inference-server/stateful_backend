@@ -140,30 +140,7 @@ def RunClient(root_dir):
   print("Client container running ...", flush=True)
   # The next few setup commands are only needed for SDK container versions > 22.03
   if new_container_created and version.parse(stateful_config.TRITON_REPO_VERSION) > version.parse("22.03"):
-    # This key fix should be temporary until Triton SDK container is updated
-    status = ccnt.exec_run(stateful_config.TRITON_CLIENT_PUBKEY_FIX_CMD)
-    # print(status[0], status[1].decode())
-    assert status[0] == 0
-
-    # The following are necessary for 22.04 and newer SDK containers
-    status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_WGET_KEY_CMD)
-    # print(status[0], status[1].decode())
-    assert status[0] == 0
-    status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_GPG_KEY_CMD)
-    # print(status[0], status[1].decode())
-    assert status[0] == 0
-    status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_ADD_KEY_CMD)
-    # print(status[0], status[1].decode())
-    assert status[0] == 0
-    status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_ADD_REPO_CMD)
-    # print(status[0], status[1].decode())
-    assert status[0] == 0
-    status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_APT_UPDATE_CMD)
-    # print(status[0], status[1].decode())
-    assert status[0] == 0
-    status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_INSTALL_CMD)
-    # print(status[0], status[1].decode())
-    assert status[0] == 0
+    stateful_utils.install_default_cmake(ccnt)
     print("CMake is now installed!")
 
   status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_SETUP_CMD)

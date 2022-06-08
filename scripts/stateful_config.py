@@ -88,7 +88,6 @@ TRITON_SERVER_KILL_CMD = "pkill --signal SIGINT tritonserver"
 
 TRITON_CLIENT_CONTAINER_NAME = "test_stateful_client"
 
-TRITON_CLIENT_WORKDIR = TRITON_VOL_DEST + "/client/build"
 TRITON_CLIENT_PUBKEY_FIX_CMD = "apt-key adv --keyserver keyserver.ubuntu.com --recv-keys A4B469963BF863CC"
 TRITON_CLIENT_CMAKE_WGET_KEY_CMD = "wget https://apt.kitware.com/keys/kitware-archive-latest.asc"
 TRITON_CLIENT_CMAKE_GPG_KEY_CMD = "gpg --dearmor kitware-archive-latest.asc"
@@ -97,6 +96,9 @@ TRITON_CLIENT_CMAKE_ADD_REPO_CMD = "apt-add-repository 'deb https://apt.kitware.
 TRITON_CLIENT_CMAKE_APT_UPDATE_CMD = "apt update"
 TRITON_CLIENT_CMAKE_INSTALL_CMD = "apt install -y --no-install-recommends cmake-data=3.18.4-0kitware1ubuntu20.04.1 cmake=3.18.4-0kitware1ubuntu20.04.1"
 
+TRITON_CLIENT_DEFAULT_CMAKE_INSTALL_CMD = "apt install -y --no-install-recommends cmake"
+
+TRITON_CLIENT_WORKDIR = TRITON_VOL_DEST + "/client/build"
 TRITON_CLIENT_CMAKE_SETUP_CMD = "mkdir -p {0}".format(TRITON_CLIENT_WORKDIR)
 TRITON_CLIENT_CMAKE_CMD = "cmake .."
 TRITON_CLIENT_MAKE_CMD = "make -j"

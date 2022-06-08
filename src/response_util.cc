@@ -70,9 +70,9 @@ SendSingleEmptyResponse(
         *response,
         TRITONBACKEND_ResponseOutput(
             *response, &output, output_tensor.name.c_str(),
-            TRITONSERVER_TYPE_FP32, one_shape.data(),
-            one_shape.size()));
-    // NOTE: Buffer creation is a must otherwise Triton sends error to client
+            static_cast<TRITONSERVER_DataType>(output_tensor.triton_type),
+            one_shape.data(), one_shape.size()));
+    // NOTE: Buffer creation is a must, otherwise Triton sends error to client
     GetOutputBuffer(response, output, 1); // since malloc(0) is undefined
   }
   if (*response != nullptr) {

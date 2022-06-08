@@ -168,6 +168,9 @@ class TritonTensorInfo {
   std::vector<int64_t> shape;
   size_t type_size;
   size_t idx;
+  ONNXTensorElementDataType ort_type;
+  nvinfer1::DataType trt_type;
+  int triton_type;
 
   // calculated
   size_t vol;
@@ -181,7 +184,7 @@ class TritonTensorInfo {
     // need to init batch dim first to set 1 for batch dim
     InitBatchDim();
     InitVol();
-    InitTypeSize();
+    InitTypeInfo();
     InitBatchStrides();
 
     std::string log = "Triton tensor is initialized: ";
@@ -227,6 +230,76 @@ class TritonTensorInfo {
     return sz;
   }
 
+  static nvinfer1::DataType String2TrtType(const std::string& typ)
+  {
+    nvinfer1::DataType trt_typ = nvinfer1::DataType::kFLOAT;
+    if (typ.compare("TYPE_BOOL") == 0) {
+      trt_typ = nvinfer1::DataType::kBOOL;
+    } else if (typ.compare("TYPE_FP16") == 0) {
+      trt_typ = nvinfer1::DataType::kHALF;
+    } else if (typ.compare("TYPE_FP32") == 0) {
+      trt_typ = nvinfer1::DataType::kFLOAT;
+    } else if (typ.compare("TYPE_INT8") == 0) {
+      trt_typ = nvinfer1::DataType::kINT8;
+    } else if (typ.compare("TYPE_INT32") == 0) {
+      trt_typ = nvinfer1::DataType::kINT32;
+    }
+    return trt_typ;
+  }
+
+  static size_t TypeToTypeSize(const nvinfer1::DataType& trt_typ)
+  {
+    size_t sz = 0;
+    switch(trt_typ)
+    {
+    case nvinfer1::DataType::kBOOL:
+      sz = 1;
+      break;
+    case nvinfer1::DataType::kFLOAT:
+      sz = 4;
+      break;
+    case nvinfer1::DataType::kHALF:
+      sz = 2;
+      break;
+    case nvinfer1::DataType::kINT8:
+      sz = 1;
+      break;
+    case nvinfer1::DataType::kINT32:
+      sz = 4;
+      break;
+    default:
+      assert(false);
+    }
+    return sz;
+  }
+
+  static ONNXTensorElementDataType GetOrtType(const nvinfer1::DataType trt_typ)
+  {
+    ONNXTensorElementDataType ort_typ =
+      ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+    switch(trt_typ)
+    {
+    case nvinfer1::DataType::kBOOL:
+      ort_typ = ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL;
+      break;
+    case nvinfer1::DataType::kFLOAT:
+      ort_typ = ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+      break;
+    case nvinfer1::DataType::kHALF:
+      ort_typ =ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16;
+      break;
+    case nvinfer1::DataType::kINT8:
+      ort_typ = ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8;
+      break;
+    case nvinfer1::DataType::kINT32:
+      ort_typ = ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
+      break;
+    default:
+      assert(false);
+    }
+    return ort_typ;
+  }
+
  private:
   void InitVol()
   {
@@ -235,7 +308,12 @@ class TritonTensorInfo {
       vol *= shape[i];
     }
   }
-  void InitTypeSize() { type_size = TypeToTypeSize(type); }
+  void InitTypeInfo()
+  {
+    trt_type = String2TrtType(type);
+    ort_type = GetOrtType(trt_type);
+    type_size = TypeToTypeSize(trt_type);
+  }
 
   void InitBatchDim()
   {
@@ -275,6 +353,32 @@ class OrtTensorInfo {
   size_t type_size;
   ONNXTensorElementDataType type;
 
+  static nvinfer1::DataType GetTrtType(ONNXTensorElementDataType ort_typ) {
+    nvinfer1::DataType typ = nvinfer1::DataType::kFLOAT;
+    switch (ort_typ)
+    {
+    case ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+      typ = nvinfer1::DataType::kINT8;
+      break;
+    case ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
+      typ = nvinfer1::DataType::kINT32;
+      break;
+    case ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
+      typ = nvinfer1::DataType::kHALF;
+      break;
+    case ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
+      typ = nvinfer1::DataType::kFLOAT;
+      break;
+    case ONNXTensorElementDataType::ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL:
+      typ = nvinfer1::DataType::kBOOL;
+      break;
+    default:
+      // TODO: DEBUG PRINT
+      std::cerr << "Unsupported type in ORT tensor detected." << std::endl;
+      break;
+    }
+    return typ;
+  }
 
   void Print(std::ostream& os)
   {
@@ -444,12 +548,12 @@ class TrtOnnxModel {
   std::unordered_set<std::string> mCorrIdToDelete;
 
 
-  samplesCommon::ManagedBufferInternal
+  std::unique_ptr<samplesCommon::ManagedBufferInternal>
       mInputs[MAX_IO_NUM];  //!< Host and device buffers for the input.
   samplesCommon::ManagedBufferInternal mInputReset{
       nvinfer1::DataType::kBOOL,
       nvinfer1::DataType::kBOOL};  //!< Host and device buffers for the input.
-  samplesCommon::ManagedBufferInternal
+  std::unique_ptr<samplesCommon::ManagedBufferInternal>
       mOutputs[MAX_IO_NUM];  //!< Host and device buffers for the outputs
   std::vector<std::unique_ptr<samplesCommon::ManagedBufferInternal>>
       mStates{};  //!< Host and device buffers for the internal states
@@ -673,8 +777,8 @@ class TrtOnnxModel {
     void printStateTensors(std::ostream& os) const
     {
       os << "I/O Tensors: " << mInputName << " / " << mOutputName;
-      os << "Dims: " << mDim;
-      os << "Buffers: " << mInputBuffer << ", " << mOutputBuffer << ", ";
+      os << " Dims: " << mDim;
+      os << " Buffers: " << mInputBuffer << ", " << mOutputBuffer << ", ";
       for (auto buffer : mStoreBuffer) {
         os << buffer;
       }

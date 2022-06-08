@@ -19,7 +19,7 @@
 # IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-cmake_minimum_required (VERSION 3.17)
+cmake_minimum_required (VERSION 3.10)
 
 project(Clients C CXX)
 
@@ -35,19 +35,30 @@ find_package(Threads REQUIRED)
 set(GRPC_CLIENT_DIR /workspace/install)
 set(GRPC_CLIENT_LIB ${GRPC_CLIENT_DIR}/lib/libgrpcclient.so ${GRPC_CLIENT_DIR}/lib/libprotobuf.a)
 set(GRPC_CLIENT_INC_DIR ${GRPC_CLIENT_DIR}/include)
+set(CURRENT_MODULE_BASE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 
 # template for building clients
-function(build_client src exe extra_incs)
+function(build_client src exe extra_incs extra_flags)
   add_executable(${exe} ${src})
+  target_compile_options(
+    ${exe}
+    PRIVATE ${extra_flags}
+  )
   target_link_libraries(
     ${exe}
     PRIVATE ${GRPC_CLIENT_LIB} Threads::Threads
+  )
+  target_include_directories(
+    ${exe}
+    PUBLIC ${extra_incs}
+    ${GRPC_CLIENT_INC_DIR}
+    ${CURRENT_MODULE_BASE_DIR}
+    # ${CMAKE_CURRENT_FUNCTION_LIST_DIR} # requires cmake 3.17 or newer
   )
   install(
     TARGETS ${exe}
     RUNTIME DESTINATION bin
   )
-  target_include_directories(${exe} PUBLIC ${extra_incs} ${GRPC_CLIENT_INC_DIR} ${CMAKE_CURRENT_FUNCTION_LIST_DIR})
 endfunction(build_client)
 
 if(WIN32)
@@ -59,6 +70,6 @@ else()
   #
   # simple_grpc_sequence_stateful_stream_infer_client
   #
-  build_client(${CMAKE_CURRENT_LIST_DIR}/simple_grpc_sequence_stateful_stream_infer_client.cc simple_grpc_sequence_stateful_stream_infer_client "")
+  build_client(${CMAKE_CURRENT_LIST_DIR}/simple_grpc_sequence_stateful_stream_infer_client.cc simple_grpc_sequence_stateful_stream_infer_client "" "")
 
 endif() # WIN32
