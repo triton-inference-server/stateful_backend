@@ -520,19 +520,6 @@ class TrtOnnxModel {
   void setBindings(int batchsize, Ort::IoBinding& iobindings);
   int GetNumSegments();
 
-  void storeStates_CPU_FP32(
-      std::vector<InferenceTask>& inferenceTasks, int batchSize,
-      int batchStride);
-  void restoreStates_CPU_FP32(
-      std::vector<InferenceTask>& inferenceTasks, int batchSize,
-      int batchStride);
-  void storeStates_CPU_FP16(
-      std::vector<InferenceTask>& inferenceTasks, int batchSize,
-      int batchStride);
-  void restoreStates_CPU_FP16(
-      std::vector<InferenceTask>& inferenceTasks, int batchSize,
-      int batchStride);
-
   void storeStates(
       std::vector<InferenceTask>& inferenceTasks, int batchSize,
       int batchStride, cudaStream_t cudaStreamToUse);
@@ -583,18 +570,20 @@ class TrtOnnxModel {
   int mNumChunks{1}; // current number of buffer chunks
   int mMaxChunks{1}; // maximum number of buffer chunks
   std::vector<void**> mStorageBufferDevicePtrOnHost;  // dev ptrs to chunks
-  void*** mStorageBufferDevice;  // either float or __half
-  float** mInputStateBufferDevice{nullptr};
-  float** mOutputStateBufferDevice{nullptr};
+  void*** mStorageBufferDevice;
+  void** mInputStateBufferDevice{nullptr};
+  void** mOutputStateBufferDevice{nullptr};
   int* mBufferSizeXDevice{nullptr};
   int* mBufferSizeYDevice{nullptr};
+  nvinfer1::DataType* mStateTypesDevice{nullptr};
   int* mStoreIdDevice{nullptr};
 
-  std::vector<std::vector<void*>> mStorageBufferHost;  // either float or __half
-  std::vector<float*> mInputStateBufferHost;
-  std::vector<float*> mOutputStateBufferHost;
+  std::vector<std::vector<void*>> mStorageBufferHost;
+  std::vector<void*> mInputStateBufferHost;
+  std::vector<void*> mOutputStateBufferHost;
   std::vector<int> mBufferSizeXHost;
   std::vector<int> mBufferSizeYHost;
+  std::vector<nvinfer1::DataType> mStateTypesHost;
   std::vector<int> mStoreIdHost;
 
 

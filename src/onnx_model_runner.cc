@@ -37,6 +37,7 @@
 #include "onnx_model_runner.h"
 #include "triton/backend/backend_common.h"
 #include "response_util.h"
+#include "states_management.h"
 
 #include <sys/time.h>
 
@@ -126,14 +127,12 @@ append_to_trtexec_string(
 
 static inline std::unique_ptr<samplesCommon::ManagedBufferInternal>
 allocate_tensor(
-    const nvinfer1::Dims& dim, const bool use_gpu, const bool alloc_fp16,
-    const cudaStream_t strm=nullptr)
+    const nvinfer1::Dims& dim, const bool use_gpu,
+    const nvinfer1::DataType type, const cudaStream_t strm=nullptr)
 {
   std::unique_ptr<samplesCommon::ManagedBufferInternal> buffer;
   try {
-    buffer.reset(new samplesCommon::ManagedBufferInternal{
-        alloc_fp16 ? nvinfer1::DataType::kHALF : nvinfer1::DataType::kFLOAT,
-        alloc_fp16 ? nvinfer1::DataType::kHALF : nvinfer1::DataType::kFLOAT});
+    buffer.reset(new samplesCommon::ManagedBufferInternal{type, type});
     if (use_gpu && strm != nullptr) {
       buffer->resize_async(dim, use_gpu, strm);
     }
@@ -488,21 +487,19 @@ TrtOnnxModel::Prepare(
       RETURN_IF_FALSE(
           dynamic_dim < INVALID_DIM,
           "No dynamic dimension in the ONNX model for a state tensor");
-      RETURN_IF_FALSE(
-          type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-          "Only FP32 precision is supported for the state tensors");
       size_t batch_dim = dynamic_dim;
-      size_t type_size = 4;
+      nvinfer1::DataType trt_type = OrtTensorInfo::GetTrtType(type);
+      size_t type_size = TritonTensorInfo::TypeToTypeSize(trt_type);
       input_node_dims[batch_dim] = dimsMax.d[batch_dim] = mBatchDimMax;
       input_tensor_size = samplesCommon::volume(dimsMax);
 
       dimsMin = dimsMax;
       dimsMin.d[batch_dim] = min_pref_batch;
 
-      mStates.emplace_back(allocate_tensor(dimsMax, mUseGpu, false));
+      mStates.emplace_back(allocate_tensor(dimsMax, mUseGpu, trt_type));
       mStateTensors.emplace_back(
           input_state_names[state_idx], output_state_names[state_idx],
-          mStates.back()->data(mUseGpu), dimsMax, nvinfer1::DataType::kFLOAT,
+          mStates.back()->data(mUseGpu), dimsMax, trt_type,
           batch_dim);
       MY_LOG(verbose_ss) << "Set dims:" << dimsMax
                  << ", tensor size = " << input_tensor_size << std::endl;
@@ -633,21 +630,19 @@ TrtOnnxModel::Prepare(
       RETURN_IF_FALSE(
           dynamic_dim < INVALID_DIM,
           "No dynamic dimension in the ONNX model for a state tensor");
-      RETURN_IF_FALSE(
-          type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-          "Only FP32 precision is supported for the state tensors");
       size_t batch_dim = dynamic_dim;
-      size_t type_size = 4;
+      nvinfer1::DataType trt_type = OrtTensorInfo::GetTrtType(type);
+      size_t type_size = TritonTensorInfo::TypeToTypeSize(trt_type);
       input_node_dims[batch_dim] = dimsMax.d[batch_dim] = mBatchDimMax;
       input_tensor_size = samplesCommon::volume(dimsMax);
 
       dimsMin = dimsMax;
       dimsMin.d[batch_dim] = min_pref_batch;
 
-      mStates.emplace_back(allocate_tensor(dimsMax, mUseGpu, false));
+      mStates.emplace_back(allocate_tensor(dimsMax, mUseGpu, trt_type));
       mStateTensors.emplace_back(
           input_state_names[state_idx], output_state_names[state_idx],
-          mStates.back()->data(mUseGpu), dimsMax, nvinfer1::DataType::kFLOAT,
+          mStates.back()->data(mUseGpu), dimsMax, trt_type,
           batch_dim);
       MY_LOG(verbose_ss) << "Set dims:" << dimsMax
                  << ", tensor size = " << input_tensor_size << std::endl;
@@ -748,18 +743,16 @@ TrtOnnxModel::Prepare(
       RETURN_IF_FALSE(
           dynamic_dim < INVALID_DIM,
           "No dynamic dimension in the ONNX model for a state tensor");
-      RETURN_IF_FALSE(
-          type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-          "Only FP32 precision is supported for the state tensors");
       size_t batch_dim = dynamic_dim;
-      size_t type_size = 4;
+      nvinfer1::DataType trt_type = OrtTensorInfo::GetTrtType(type);
+      size_t type_size = TritonTensorInfo::TypeToTypeSize(trt_type);
       output_node_dims[batch_dim] = dimsMax.d[batch_dim] = mBatchDimMax;
       size_t output_tensor_size = samplesCommon::volume(dimsMax);
 
       dimsMin = dimsMax;
       dimsMin.d[batch_dim] = min_pref_batch;
 
-      mStates.emplace_back(allocate_tensor(dimsMax, mUseGpu, false));
+      mStates.emplace_back(allocate_tensor(dimsMax, mUseGpu, trt_type));
       matchingOutputStates.emplace_back(
           output_name_str, mStates.back()->data(mUseGpu));
 
@@ -810,7 +803,7 @@ TrtOnnxModel::Prepare(
       auto dimsMaxCon = iTensor.mDim;
       dimsMaxCon.d[iTensor.mBatchDim] = mBufferConfig.initial_buffer_size;
       chunk0.emplace_back(
-          allocate_tensor(dimsMaxCon, mUseGpu, mStoreStatesAsFp16));
+          allocate_tensor(dimsMaxCon, mUseGpu, iTensor.mType));
       iTensor.mStoreBuffer.resize(mMaxChunks);
       iTensor.mStoreBuffer[0] = chunk0.back()->data(mUseGpu);
     }
@@ -836,15 +829,15 @@ TrtOnnxModel::Prepare(
       mOutputStateBufferHost.resize(mNumStates);
       mBufferSizeXHost.resize(mNumStates);
       mBufferSizeYHost.resize(mNumStates);
+      mStateTypesHost.resize(mNumStates);
       mStoreIdHost.resize(mBatchDimMax*2);
       mCorrIdToDelete.reserve(mBufferConfig.initial_buffer_size);
       for (int i = 0; i < mNumStates; ++i) {
         mStorageBufferHost[0][i] = mStateTensors[i].mStoreBuffer[0];
-        mInputStateBufferHost[i] =
-            reinterpret_cast<float*>(mStateTensors[i].mInputBuffer);
-        mOutputStateBufferHost[i] =
-            reinterpret_cast<float*>(mStateTensors[i].mOutputBuffer);
+        mInputStateBufferHost[i] = mStateTensors[i].mInputBuffer;
+        mOutputStateBufferHost[i] = mStateTensors[i].mOutputBuffer;
 
+        mStateTypesHost[i] = mStateTensors[i].mType;
         mBufferSizeXHost[i] = 1;
         mBufferSizeYHost[i] = 1;
 
@@ -873,16 +866,19 @@ TrtOnnxModel::Prepare(
         }
         RETURN_IF_CUDA_ERROR(cudaMalloc(
             reinterpret_cast<void**>(&mInputStateBufferDevice),
-            mNumStates * sizeof(float*)));
+            mNumStates * sizeof(void*)));
         RETURN_IF_CUDA_ERROR(cudaMalloc(
             reinterpret_cast<void**>(&mOutputStateBufferDevice),
-            mNumStates * sizeof(float*)));
+            mNumStates * sizeof(void*)));
         RETURN_IF_CUDA_ERROR(cudaMalloc(
             reinterpret_cast<void**>(&mBufferSizeXDevice),
             mNumStates * sizeof(int)));
         RETURN_IF_CUDA_ERROR(cudaMalloc(
             reinterpret_cast<void**>(&mBufferSizeYDevice),
             mNumStates * sizeof(int)));
+        RETURN_IF_CUDA_ERROR(cudaMalloc(
+            reinterpret_cast<void**>(&mStateTypesDevice),
+            mNumStates * sizeof(nvinfer1::DataType)));
         RETURN_IF_CUDA_ERROR(cudaMalloc(
             reinterpret_cast<void**>(&mStoreIdDevice),
             mBatchDimMax * 2 * sizeof(int)));
@@ -898,16 +894,19 @@ TrtOnnxModel::Prepare(
             mNumStates * sizeof(void*), cudaMemcpyHostToDevice));
         RETURN_IF_CUDA_ERROR(cudaMemcpy(
             mInputStateBufferDevice, mInputStateBufferHost.data(),
-            mNumStates * sizeof(float*), cudaMemcpyHostToDevice));
+            mNumStates * sizeof(void*), cudaMemcpyHostToDevice));
         RETURN_IF_CUDA_ERROR(cudaMemcpy(
             mOutputStateBufferDevice, mOutputStateBufferHost.data(),
-            mNumStates * sizeof(float*), cudaMemcpyHostToDevice));
+            mNumStates * sizeof(void*), cudaMemcpyHostToDevice));
         RETURN_IF_CUDA_ERROR(cudaMemcpy(
             mBufferSizeXDevice, mBufferSizeXHost.data(),
             mNumStates * sizeof(int), cudaMemcpyHostToDevice));
         RETURN_IF_CUDA_ERROR(cudaMemcpy(
             mBufferSizeYDevice, mBufferSizeYHost.data(),
             mNumStates * sizeof(int), cudaMemcpyHostToDevice));
+        RETURN_IF_CUDA_ERROR(cudaMemcpy(
+            mStateTypesDevice, mStateTypesHost.data(),
+            mNumStates * sizeof(nvinfer1::DataType), cudaMemcpyHostToDevice));
       }
     }
   }
@@ -990,19 +989,14 @@ TrtOnnxModel::setBindings(int batchsize, Ort::IoBinding& iobindings)
   }
 }
 
-void launchRestoreGPUKernel_FP32(
-    float*** storage, float** states, int* sizesX, int* sizesY, int numStates,
-    int* storeids, int batchSize, int batchStride, cudaStream_t stream);
-void launchStoreGPUKernel_FP32(
-    float*** storage, float** states, int* sizesX, int* sizesY, int numStates,
-    int* storeids, int batchSize, int batchStride, cudaStream_t stream);
-
-void launchRestoreGPUKernel_FP16(
-    __half*** storage, float** states, int* sizesX, int* sizesY, int numStates,
-    int* storeids, int batchSize, int batchStride, cudaStream_t stream);
-void launchStoreGPUKernel_FP16(
-    __half*** storage, float** states, int* sizesX, int* sizesY, int numStates,
-    int* storeids, int batchSize, int batchStride, cudaStream_t stream);
+void launchRestoreGPUKernel(
+    void*** storage, void** states, int* sizesX, int* sizesY, int numStates,
+    int* storeids, int batchSize, int batchStride, cudaStream_t stream,
+    nvinfer1::DataType* stateTypes, bool convert);
+void launchStoreGPUKernel(
+    void*** storage, void** states, int* sizesX, int* sizesY, int numStates,
+    int* storeids, int batchSize, int batchStride, cudaStream_t stream,
+    nvinfer1::DataType* stateTypes, bool convert);
 
 void
 TrtOnnxModel::clearStates(
@@ -1104,114 +1098,6 @@ TrtOnnxModel::prepareDeviceStoreIds(
   return std::string();
 }
 
-void
-TrtOnnxModel::storeStates_CPU_FP32(
-    std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride)
-{
-  for (int i = 0; i < mNumStates; ++i) {
-    size_t sizeX = mBufferSizeXHost[i];
-    size_t sizeY = mBufferSizeYHost[i];
-    for (int j = 0; j < batchSize; ++j) {
-      if (!inferenceTasks[j].err_msg.empty())
-        continue;  // don't store if error
-      const int chunk_id = mStoreIdHost[j*2];
-      const int buffer_idx = mStoreIdHost[j*2+1];
-      if (chunk_id < 0 || buffer_idx < 0)
-        continue;  // no empty slots
-      float* storageBuffer =
-              static_cast<float*>(mStorageBufferHost[chunk_id][i]);
-      for (size_t ix = 0; ix < sizeX; ++ix) {
-        for (size_t iy = 0; iy < sizeY; ++iy) {
-          storageBuffer[buffer_idx * sizeX * sizeY + ix * sizeY + iy] =
-              mOutputStateBufferHost[i]
-                                    [ix * batchStride * sizeY + j * sizeY + iy];
-        }
-      }
-    }
-  }
-}
-
-void
-TrtOnnxModel::restoreStates_CPU_FP32(
-    std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride)
-{
-  for (int i = 0; i < mNumStates; ++i) {
-    size_t sizeX = mBufferSizeXHost[i];
-    size_t sizeY = mBufferSizeYHost[i];
-    for (int j = 0; j < batchSize; ++j) {
-      if (!inferenceTasks[j].err_msg.empty())
-        continue;  // don't restore if error
-      const int chunk_id = mStoreIdHost[j*2];
-      const int buffer_idx = mStoreIdHost[j*2+1];
-      if (chunk_id < 0 || buffer_idx < 0)
-        continue;  // no empty slots
-      float* storageBuffer =
-              static_cast<float*>(mStorageBufferHost[chunk_id][i]);
-      for (size_t ix = 0; ix < sizeX; ++ix) {
-        for (size_t iy = 0; iy < sizeY; ++iy) {
-          mInputStateBufferHost[i][ix * batchStride * sizeY + j * sizeY + iy] =
-              storageBuffer[buffer_idx * sizeX * sizeY + ix * sizeY + iy];
-        }
-      }
-    }
-  }
-}
-
-void
-TrtOnnxModel::storeStates_CPU_FP16(
-    std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride)
-{
-  for (int i = 0; i < mNumStates; ++i) {
-    size_t sizeX = mBufferSizeXHost[i];
-    size_t sizeY = mBufferSizeYHost[i];
-    for (int j = 0; j < batchSize; ++j) {
-      if (!inferenceTasks[j].err_msg.empty())
-        continue;  // don't store if error
-      const int chunk_id = mStoreIdHost[j*2];
-      const int buffer_idx = mStoreIdHost[j*2+1];
-      if (chunk_id < 0 || buffer_idx < 0)
-        continue;  // no empty slots
-      __half* storageBuffer =
-              static_cast<__half*>(mStorageBufferHost[chunk_id][i]);
-      for (size_t ix = 0; ix < sizeX; ++ix) {
-        for (size_t iy = 0; iy < sizeY; ++iy) {
-          storageBuffer[buffer_idx * sizeX * sizeY + ix * sizeY + iy] =
-              __float2half(mOutputStateBufferHost[i]
-                                                 [ix * batchStride * sizeY +
-                                                  j * sizeY + iy]);
-        }
-      }
-    }
-  }
-}
-
-void
-TrtOnnxModel::restoreStates_CPU_FP16(
-    std::vector<InferenceTask>& inferenceTasks, int batchSize, int batchStride)
-{
-  for (int i = 0; i < mNumStates; ++i) {
-    size_t sizeX = mBufferSizeXHost[i];
-    size_t sizeY = mBufferSizeYHost[i];
-    for (int j = 0; j < batchSize; ++j) {
-      if (!inferenceTasks[j].err_msg.empty())
-        continue;  // don't restore if error
-      const int chunk_id = mStoreIdHost[j*2];
-      const int buffer_idx = mStoreIdHost[j*2+1];
-      if (chunk_id < 0 || buffer_idx < 0)
-        continue;  // no empty slots
-      __half* storageBuffer =
-              static_cast<__half*>(mStorageBufferHost[chunk_id][i]);
-      for (size_t ix = 0; ix < sizeX; ++ix) {
-        for (size_t iy = 0; iy < sizeY; ++iy) {
-          mInputStateBufferHost[i][ix * batchStride * sizeY + j * sizeY + iy] =
-              __half2float(
-                  storageBuffer
-                      [buffer_idx * sizeX * sizeY + ix * sizeY + iy]);
-        }
-      }
-    }
-  }
-}
 
 void
 TrtOnnxModel::storeStates(
@@ -1219,23 +1105,15 @@ TrtOnnxModel::storeStates(
     cudaStream_t cudaStreamToUse)
 {
   if (mUseGpu) {
-    if (mStoreStatesAsFp16) {
-      launchStoreGPUKernel_FP16(
-          reinterpret_cast<__half***>(mStorageBufferDevice),
-          mOutputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
-          mNumStates, mStoreIdDevice, batchSize, batchStride, cudaStreamToUse);
-    } else {
-      launchStoreGPUKernel_FP32(
-          reinterpret_cast<float***>(mStorageBufferDevice),
-          mOutputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
-          mNumStates, mStoreIdDevice, batchSize, batchStride, cudaStreamToUse);
-    }
+    launchStoreGPUKernel(
+      mStorageBufferDevice, mOutputStateBufferDevice, mBufferSizeXDevice,
+      mBufferSizeYDevice, mNumStates, mStoreIdDevice, batchSize, batchStride,
+      cudaStreamToUse, mStateTypesDevice, mStoreStatesAsFp16);
   } else {
-    if (mStoreStatesAsFp16) {
-      storeStates_CPU_FP16(inferenceTasks, batchSize, batchStride);
-    } else {
-      storeStates_CPU_FP32(inferenceTasks, batchSize, batchStride);
-    }
+    stateful::store_states_cpu(
+      mStorageBufferHost, mOutputStateBufferHost, mBufferSizeXHost,
+      mBufferSizeYHost, mNumStates, mStoreIdHost, batchSize, batchStride,
+      mStateTypesHost, mStoreStatesAsFp16);
   }
 }
 
@@ -1245,23 +1123,15 @@ TrtOnnxModel::restoreStates(
     cudaStream_t cudaStreamToUse)
 {
   if (mUseGpu) {
-    if (mStoreStatesAsFp16) {
-      launchRestoreGPUKernel_FP16(
-          reinterpret_cast<__half***>(mStorageBufferDevice),
-          mInputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
-          mNumStates, mStoreIdDevice, batchSize, batchStride, cudaStreamToUse);
-    } else {
-      launchRestoreGPUKernel_FP32(
-          reinterpret_cast<float***>(mStorageBufferDevice),
-          mInputStateBufferDevice, mBufferSizeXDevice, mBufferSizeYDevice,
-          mNumStates, mStoreIdDevice, batchSize, batchStride, cudaStreamToUse);
-    }
+    launchRestoreGPUKernel(
+      mStorageBufferDevice, mInputStateBufferDevice, mBufferSizeXDevice,
+      mBufferSizeYDevice, mNumStates, mStoreIdDevice, batchSize, batchStride,
+      cudaStreamToUse, mStateTypesDevice, mStoreStatesAsFp16);
   } else {
-    if (mStoreStatesAsFp16) {
-      restoreStates_CPU_FP16(inferenceTasks, batchSize, batchStride);
-    } else {
-      restoreStates_CPU_FP32(inferenceTasks, batchSize, batchStride);
-    }
+    stateful::restore_states_cpu(
+      mStorageBufferHost, mInputStateBufferHost, mBufferSizeXHost,
+      mBufferSizeYHost, mNumStates, mStoreIdHost, batchSize, batchStride,
+      mStateTypesHost, mStoreStatesAsFp16);
   }
 }
 
@@ -1320,7 +1190,7 @@ TrtOnnxModel::AllocateNewChunk(log_stream_t& verbose_ss, log_stream_t& info_ss)
     auto dims = iTensor.mDim;
     dims.d[iTensor.mBatchDim] = mBufferConfig.subsequent_buffer_size;
     newChunk.emplace_back(
-        allocate_tensor(dims, mUseGpu, mStoreStatesAsFp16,
+        allocate_tensor(dims, mUseGpu, iTensor.mType,
           mAllocFreeAsync ? mCudaStreamExe : nullptr));
 
     const auto statesPtr = newChunk.back()->data(mUseGpu);

@@ -325,6 +325,7 @@ def main():
     # simulate model
     input_name = model_info.input_names[i]
     output_name = model_info.output_names[i]
+    print("Checking ", input_name, output_name)
     expected_outputs = simulate_model(input_data, input_name, i)
     # compare results with simulated output
     for seqi in range(FLAGS.num_sequence):
