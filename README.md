@@ -188,7 +188,6 @@ will set the ORT logging level to `ORT_LOGGING_LEVEL_ERROR`. Refer to [this](htt
 ## Limitations
 * Stateful backend only works with ONNX models
 * All tensor dimensions except for the batch dimension is fixed for a model instance
-* Only float (FP32) state tensors are supported
 * Model state reset tensor should be a boolean tensor
 * Only `oldest` sequence batching strategy is supported
 * **NOTE**: The backend cannot be loaded/unloaded repeatedly (e.g. Triton's explicit loading mode) since ORT doesn't allow destroying 
