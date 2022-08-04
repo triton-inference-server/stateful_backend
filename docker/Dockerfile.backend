@@ -84,11 +84,12 @@ RUN rm -f /usr/local/bin/cmake
 WORKDIR /workspace
 
 # Clone ONNXRT release branch
-RUN git clone --branch rel-1.11.1  https://github.com/microsoft/onnxruntime.git && cd /workspace/onnxruntime && git checkout 366f4ebcb425b6a47c2b0decd3b39fa14eb9dbf6
+RUN git clone --branch rel-1.12.1  https://github.com/microsoft/onnxruntime.git && cd /workspace/onnxruntime && git checkout 70481649e3c2dba0f0e1728d15a00e440084a217
 # initialize the submodules in case we need any customizations
 RUN cd /workspace/onnxruntime && git submodule sync --recursive && git submodule update --init --recursive
+
 # Build the ONNXRT
-RUN cd /workspace/onnxruntime && ./build.sh --use_cuda --cuda_home /usr/local/cuda-11.7/ --cuda_version 11.7 --cudnn_home /usr/lib/x86_64-linux-gnu/ --use_tensorrt --tensorrt_home /usr/lib/x86_64-linux-gnu/ --parallel 8 --build_shared_lib --config Release --skip_tests --skip_submodule_sync
+RUN cd /workspace/onnxruntime && ./build.sh --use_cuda --cuda_home /usr/local/cuda-11.7/ --cuda_version 11.7 --cudnn_home /usr/lib/x86_64-linux-gnu/ --use_tensorrt --tensorrt_home /usr/lib/x86_64-linux-gnu/ --parallel 8 --build_shared_lib --config Release --skip_tests --skip_submodule_sync --build_wheel
 
 # Go to the build directory and perform the install step
 RUN cd /workspace/onnxruntime/build/Linux/Release && cmake -DCMAKE_INSTALL_PREFIX=/workspace/onnxruntime/install -P cmake_install.cmake
