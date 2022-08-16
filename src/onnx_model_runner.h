@@ -371,7 +371,8 @@ class TrtOnnxModel {
       std::string reset_tensor_name, bool useTrtEp = true, bool useFp16 = false,
       bool store_states_as_fp16 = false, bool pad_to_max_batch = false,
       bool enable_trt_caching = false, std::string trt_cache_dir = "/tmp",
-      int64_t logLevel = 1, int64_t metricLoggingFreq = 0,
+      int64_t logLevel = 1, int64_t metric_logging_freq = 0,
+      int64_t metric_logging_level = 3,
       int64_t sequnce_timeout_microseconds = INT64_MAX);
 
   // Runs inference for multiple tasks for Triton backend
@@ -506,6 +507,8 @@ class TrtOnnxModel {
   double mHostPreTime{0.}, mHostPostTime{0.};
   double mDevicePreTime{0.}, mDevicePostTime{0.};
   double mDeviceExeTime{0.};
+  double mLazyAllocTime{0.};
+  double mSendResponseTime{0.};
   double mCaptureTime{0.};
   size_t mNumInferCalls{0};
   size_t mMaxExecBatchSize{0};
@@ -523,6 +526,7 @@ class TrtOnnxModel {
   // logging
   int64_t mLogLevel;
   int64_t mMetricLoggingFreqSeconds;
+  int64_t mMetricLoggingLevel;
 
  public:
   // StateTensor initializes state tensors based on a description file.

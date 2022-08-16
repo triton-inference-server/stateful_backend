@@ -55,7 +55,7 @@ NGC_VERSION=$(head -1 ./NGC_VERSION) # read the container version to use
 docker run --gpus all -it --rm --shm-size=1g --ulimit memlock=-1 --ulimit stack=67108864 -p8005:8005 -p8006:8006 -p8007:8007 -v${PWD}:/workspace/stateful_backend nvcr.io/nvidia/tritonserver:${NGC_VERSION}-py3
 rm -rf /opt/tritonserver/backends/onnxruntime # Remove existing ORT backend to avoid having two copies
 cp  -R /workspace/stateful_backend/build/install/backends/stateful ./backends/ # Copy the stateful backend
-export LD_LIBRARY_PATH=/workspace/stateful_backend/build/ort-lib/ # Add ORT to the LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/workspace/stateful_backend/build/custom-ort/lib/ # Add ORT to the LD_LIBRARY_PATH
 tritonserver --grpc-port 8005 --model-repository /workspace/stateful_backend/models/ # Run the triton inference server
 ```
 
@@ -138,7 +138,10 @@ to serve similar stateful ONNX models.
    However, it may impact the result accuracy.
 * `metric_logging_frequency_seconds` controls how frequently the backend logs the inference statistics. Default is `0` to disable such logs.
 * `enable_trt_caching` and `trt_cache_dir` to control the engine caching from TRT. The default values are `0` (disabled) and `/tmp` respectively.
-* `logging_level` controls the level of details in the backend's model runner logs. Possible values are `NONE`, `INFO` and `VERBOSE`. Default is `INFO`.
+* `logging_level` controls the level of details in the backend's model runner logs. Possible values are `NONE`, `INFO` and `VERBOSE`. Default is `INFO`. Two additional parameters to further control some logs:
+   * `batch_info_logging_level` controls whether the batch information will be logged during each execution of the model. Possible values are `INFO` and `VERBOSE`. Default is `INFO` which will put these logs into the same stream as the `logging_level`'s `INFO`.
+   * `detailed_metrics_logging_level` controls whether some detailed metrics from the backend will be logged or not. Possible values are `INFO` and `VERBOSE`. Default is `VERBOSE` which will put these logs into the same stream as the `logging_level`'s `VERBOSE`. Note that metric logging must 
+   be enabled for this. See `metric_logging_frequency_seconds`.
 * `max_candidate_sequence_use_ratio` controls whether the number of maximum simultaneous sequences should less than what Triton uses 
    i.e. `max_candidate_sequences`. The ratio can be used to enable prompt error handling in the backend for overloaded servers. Default value for this is `0.9`.
 * `infer_end_requests` controls whether to run inference on requests with `end` signal. If specified as `0`, the backend will not run inference 
