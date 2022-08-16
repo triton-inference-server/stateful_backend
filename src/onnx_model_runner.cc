@@ -1068,10 +1068,12 @@ TrtOnnxModel::prepareDeviceStoreIds(
 #endif
     }
   }
-  if (mUseGpu)
+  if (mUseGpu) {
+    MY_LOG(verbose_ss) << "Copying the store ids to device." << std::endl;
     RETURN_IF_CUDA_ERROR(cudaMemcpyAsync(
         mStoreIdDevice, mStoreIdHost.data(), batchSize * 2 * sizeof(int),
         cudaMemcpyHostToDevice, mCudaStreamExe));
+  }
   return std::string();
 }
 
