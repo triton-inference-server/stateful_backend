@@ -83,7 +83,7 @@ TRITON_SERVER_TRT_CACHE_ENABLE_ENV = "ORT_TENSORRT_ENGINE_CACHE_ENABLE=1"
 TRITON_SERVER_TRT_CACHE_PATH_ENV = "ORT_TENSORRT_CACHE_PATH=/tmp"
 TRITON_SERVER_ENV = [TRITON_SERVER_LD_LIBPATH_PREFIX, TRITON_SERVER_TRT_CACHE_ENABLE_ENV, TRITON_SERVER_TRT_CACHE_PATH_ENV]
 TRITON_SERVER_MODEL_REPO_DIR = TRITON_VOL_DEST + "/models"
-TRITON_SERVER_CMD = "tritonserver --grpc-port {0} --model-repository {1} --backend-config=stateful,ort-logging-level=3".format(TRITON_GRPC_PORT, TRITON_SERVER_MODEL_REPO_DIR)
+TRITON_SERVER_CMD = "tritonserver --grpc-port {0} --model-repository {1} --backend-config=stateful,ort-logging-level=0".format(TRITON_GRPC_PORT, TRITON_SERVER_MODEL_REPO_DIR)
 TRITON_SERVER_KILL_CMD = "pkill --signal SIGINT tritonserver"
 
 TRITON_CLIENT_CONTAINER_NAME = "test_stateful_client"

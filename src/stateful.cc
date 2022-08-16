@@ -1053,7 +1053,8 @@ TRITONBACKEND_ModelInstanceExecute(
   if (infer_request_count > 0) {
     LOG_MESSAGE(TRITONSERVER_LOG_INFO,
                 (std::string("Running inference of ") +
-                std::to_string(infer_request_count) + " requests.").c_str());
+                std::to_string(infer_request_count) + " requests on instance " +
+                instance_state->Name() + ".").c_str());
     const bool send_response_early = true;
     void* vp_responses = send_response_early ?
                 reinterpret_cast<void*>(responses.data()) : nullptr;
