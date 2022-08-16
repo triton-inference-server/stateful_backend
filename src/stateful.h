@@ -100,12 +100,14 @@ class ModelState : public BackendModel {
   std::string state_pairs_;
   std::string max_candidate_sequence_use_ratio_;
   int64_t logging_level_;
+  int64_t detailed_metrics_logging_level_;
   std::string metric_logging_frequency_seconds_;
   std::string enable_trt_caching_;
   std::string trt_cache_dir_;
   std::string always_pad_to_max_batch_;
   bool infer_end_requests_;
   int64_t error_inject_rate_;
+  TRITONSERVER_LogLevel batch_info_logging_level_;
 
   std::vector<TritonTensorInfo> input_tensors_;
   std::vector<TritonTensorInfo> output_tensors_;

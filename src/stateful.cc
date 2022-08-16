@@ -151,6 +151,27 @@ GetInt64Parameter(
   return nullptr;
 }
 
+inline TRITONSERVER_Error*
+ParseLogLevel(common::TritonJson::Value& parameters, std::string name,
+              int64_t& triton_log_level)
+{
+  common::TritonJson::Value logging_level;
+  std::string str_logging_level;
+  RETURN_IF_ERROR(parameters.MemberAsObject(name.c_str(), &logging_level));
+  RETURN_IF_ERROR(
+        logging_level.MemberAsString("string_value", &str_logging_level));
+  if (str_logging_level.compare("NONE") == 0) {
+    triton_log_level = -1;
+  }
+  else if (str_logging_level.compare("VERBOSE") == 0) {
+    triton_log_level = static_cast<int64_t>(TRITONSERVER_LOG_VERBOSE);
+  }
+  else if (str_logging_level.compare("INFO") == 0) {
+    triton_log_level = static_cast<int64_t>(TRITONSERVER_LOG_INFO);
+  }
+  return nullptr;
+}
+
 // Initialize the model specific variables shared by all instances
 TRITONSERVER_Error*
 ModelState::InitModelState()
@@ -162,25 +183,10 @@ ModelState::InitModelState()
   common::TritonJson::Value parameters;
   RETURN_IF_ERROR(model_config_.MemberAsObject("parameters", &parameters));
 
-  common::TritonJson::Value logging_level;
-  std::string str_logging_level;
-  CHECK_IF_ERROR(
-      parameters.MemberAsObject("logging_level", &logging_level),
-      parse_succeeded);
-  if (parse_succeeded) {
-    IGNORE_ERROR(
-        logging_level.MemberAsString("string_value", &str_logging_level));
-  }
-  if (str_logging_level.compare("NONE") == 0) {
-    logging_level_ = -1;
-  }
-  if (str_logging_level.compare("VERBOSE") == 0) {
-    logging_level_ = static_cast<int64_t>(TRITONSERVER_LOG_VERBOSE);
-  }
+  IGNORE_ERROR(ParseLogLevel(parameters, "logging_level", logging_level_));
   LOG_MESSAGE(
       TRITONSERVER_LOG_INFO,
-      (std::string("Logging Level = ") + str_logging_level +
-       " :: " + std::to_string(logging_level_))
+      (std::string("Logging Level = ") + std::to_string(logging_level_))
           .c_str());
 
   std::string str_logs;
@@ -226,6 +232,9 @@ ModelState::InitModelState()
   store_states_as_fp16_ = "0";
   max_candidate_sequence_use_ratio_ = "0.9";
   trt_cache_dir_ = "/tmp";
+  batch_info_logging_level_ = TRITONSERVER_LOG_INFO;
+  detailed_metrics_logging_level_ = TRITON2INT_LOG_LEVEL(
+                                                  TRITONSERVER_LOG_VERBOSE);
 
   IGNORE_ERROR(model_config_.MemberAsInt("max_batch_size", &max_batch_size_));
   pref_batch_sizes_ = {max_batch_size_};
@@ -446,6 +455,27 @@ ModelState::InitModelState()
       TRITONSERVER_LOG_INFO, (std::string("Metric Logging Frequency = ") +
                               metric_logging_frequency_seconds_)
                                  .c_str());
+
+  IGNORE_ERROR(ParseLogLevel(parameters, "detailed_metrics_logging_level",
+                              detailed_metrics_logging_level_));
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("Detailed Metric Logging Level = ") +
+       std::to_string(detailed_metrics_logging_level_)).c_str());
+
+  int64_t i64_log_lvl = -1;
+  IGNORE_ERROR(ParseLogLevel(parameters, "batch_info_logging_level",
+                              i64_log_lvl));
+  if (i64_log_lvl >= 0) {
+    batch_info_logging_level_ = INT2TRITON_LOG_LEVEL(i64_log_lvl);
+  }
+  else if (logging_level_ >= 0) {
+    batch_info_logging_level_ = INT2TRITON_LOG_LEVEL(logging_level_);
+  }
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("Batch Info Logging Level = ") +
+       std::to_string(batch_info_logging_level_)).c_str());
 
   common::TritonJson::Value always_pad_to_max_batch;
   CHECK_IF_ERROR(
@@ -902,7 +932,8 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
         model_state->output_tensors_, model_state->start_tensor_name_, useTrtEp,
         useFp16, store_states_as_fp16, pad_to_max_batch, enable_trt_caching,
         model_state->trt_cache_dir_, model_state->logging_level_,
-        metricLoggingFreq, model_state->max_sequence_idle_microseconds_);
+        metricLoggingFreq, model_state->detailed_metrics_logging_level_,
+        model_state->max_sequence_idle_microseconds_);
 
     std::string str_logs = ss_logs.str();
     if (model_state->logging_level_ >= 0 && !str_logs.empty()) {
@@ -1051,7 +1082,7 @@ TRITONBACKEND_ModelInstanceExecute(
   uint64_t comp_start_ns = 0, comp_end_ns = 0;
 
   if (infer_request_count > 0) {
-    LOG_MESSAGE(TRITONSERVER_LOG_INFO,
+    LOG_MESSAGE(model_state->batch_info_logging_level_,
                 (std::string("Running inference of ") +
                 std::to_string(infer_request_count) + " requests on instance " +
                 instance_state->Name() + ".").c_str());

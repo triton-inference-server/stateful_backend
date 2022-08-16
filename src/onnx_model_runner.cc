@@ -195,8 +195,8 @@ TrtOnnxModel::Prepare(
     const std::vector<TritonTensorInfo>& output_tensors,
     std::string reset_tensor_name, bool useTrtEp, bool useFp16,
     bool store_states_as_fp16, bool pad_to_max_batch, bool enable_trt_caching,
-    std::string trt_cache_dir, int64_t logLevel, int64_t metricLoggingFreq,
-    int64_t seq_timeout_us)
+    std::string trt_cache_dir, int64_t logLevel, int64_t metric_logging_freq,
+    int64_t metric_logging_level, int64_t seq_timeout_us)
 {
   mLogLevel = logLevel;
 #ifdef VERBOSE_COUT
@@ -232,7 +232,8 @@ TrtOnnxModel::Prepare(
   }
 
   mBufferConfig = buffer_config;
-  mMetricLoggingFreqSeconds = metricLoggingFreq;
+  mMetricLoggingFreqSeconds = metric_logging_freq;
+  mMetricLoggingLevel = metric_logging_level;
   mPreferredBatchSizes = pref_batch_sizes;
   mSequenceTimeoutMicroseconds = seq_timeout_us;
   // setup storage buffer chunks
@@ -1137,7 +1138,7 @@ TrtOnnxModel::restoreStates(
   }
 }
 
-void
+inline void
 TrtOnnxModel::capture_time(double& time, int start_end, int bathsize)
 {
   if (start_end == 0)
@@ -1153,17 +1154,22 @@ TrtOnnxModel::report_time(log_stream_t& verbose_ss, log_stream_t& info_ss)
   if (mMetricLoggingFreqSeconds > 0  // is logging enabled
       && DURATION(curTimeStamp - lastLogTimeStamp).count() >=
              mMetricLoggingFreqSeconds) {
-    MY_LOG(verbose_ss) << "Host preprocessing: " << mHostPreTime << std::endl;
-    MY_LOG(verbose_ss) << "Host post-processing: " << mHostPostTime << std::endl;
-    MY_LOG(verbose_ss) << "Device preprocessing: " << mDevicePreTime << std::endl;
-    MY_LOG(verbose_ss) << "Device post-processing: " << mDevicePostTime << std::endl;
-    MY_LOG(verbose_ss) << "Device exe time: " << mDeviceExeTime << std::endl;
+    log_stream_t& metric_ss = (mMetricLoggingLevel < 0 ||
+                               mMetricLoggingLevel > 1) ? verbose_ss : info_ss;
+    MY_LOG(metric_ss) << "Host preprocessing: " << mHostPreTime << std::endl;
+    MY_LOG(metric_ss) << "Host post-processing: " << mHostPostTime << std::endl;
+    MY_LOG(metric_ss) << "Device preprocessing: " << mDevicePreTime << std::endl;
+    MY_LOG(metric_ss) << "Device post-processing: " << mDevicePostTime << std::endl;
+    MY_LOG(metric_ss) << "Device exe time: " << mDeviceExeTime << std::endl;
+    MY_LOG(metric_ss) << "Lazy Alloc time: " << mLazyAllocTime << std::endl;
+    MY_LOG(metric_ss) << "Time for sending responses: " << mSendResponseTime << std::endl;
     double totalTime = mHostPreTime + mHostPostTime + mDevicePreTime +
-                       mDevicePostTime + mDeviceExeTime;
-    MY_LOG(verbose_ss) << "Total exe time: " << totalTime << std::endl;
-    MY_LOG(verbose_ss) << "Batch size sum: " << mBatchSizeSum << std::endl;
-    MY_LOG(verbose_ss) << "Number of Inference calls: " << mNumInferCalls << std::endl;
-    verbose_ss << std::endl;
+                       mDevicePostTime + mDeviceExeTime + mLazyAllocTime +
+                       mSendResponseTime;
+    MY_LOG(metric_ss) << "Total exe time: " << totalTime << std::endl;
+    MY_LOG(metric_ss) << "Total number of requests: " << mBatchSizeSum << std::endl;
+    MY_LOG(metric_ss) << "Number of Inference calls: " << mNumInferCalls << std::endl;
+    metric_ss << std::endl;
     MY_LOG(info_ss) << "Average Batch Size: "
             << static_cast<double>(mBatchSizeSum) / mNumInferCalls
             << ", Max Batch Size: " << mMaxExecBatchSize << std::endl;
@@ -1172,6 +1178,8 @@ TrtOnnxModel::report_time(log_stream_t& verbose_ss, log_stream_t& info_ss)
     mDevicePreTime = 0.;
     mDevicePostTime = 0.;
     mDeviceExeTime = 0.;
+    mLazyAllocTime = 0.;
+    mSendResponseTime = 0.;
     mBatchSizeSum = 0;
     mMaxExecBatchSize = 0;
     mNumInferCalls = 0;
@@ -1429,8 +1437,8 @@ TrtOnnxModel::InferTasks(
 
   capture_time(mDevicePostTime, 1, batchSize);
 
-  capture_time(mHostPostTime, 0, batchSize);
   for (int j = 0; j < batchSize; ++j) {
+    capture_time(mHostPostTime, 0, batchSize);
     int counter_output = 0;
     for (const auto& itensor : mOutputTritonTensorInfo) {
 #ifdef VERBOSE_OUTPUT
@@ -1451,16 +1459,20 @@ TrtOnnxModel::InferTasks(
       }
       counter_output++;
     }
+    capture_time(mHostPostTime, 1, batchSize);
 
 #ifndef NO_TRITON
     if (responses != nullptr) {
+      capture_time(mSendResponseTime, 0, batchSize);
       // Send the responses early
       triton::backend::stateful::utils::SendSingleResponse(
         inferenceTasks[j], j, responses);
+      capture_time(mSendResponseTime, 1, batchSize);
     }
 #endif // NO_TRITON
   }
 
+  capture_time(mHostPostTime, 0, batchSize);
   // cleanup storage if EndSequence received
   for (int i = 0; i < batchSize; ++i) {
     if (inferenceTasks[i].mEnd && inferenceTasks[i].err_msg.empty()) {
@@ -1471,23 +1483,26 @@ TrtOnnxModel::InferTasks(
       clearStates(corrId);
     }
   }
-
-  // allocate/free chunks here
-  int total_free = 0;
-  for (int i=0; i<mNumChunks; ++i) {
-    total_free += mStoreAvailableIds[i].size();
-  }
-  if (total_free < mBufferConfig.alloc_threshold &&
-      mNumChunks < mMaxChunks) {
-    // we need a new chunk
-    AllocateNewChunk(verbose_ss, info_ss);
-  }
-  else if (mNumChunks > 1 && total_free > mBufferConfig.dealloc_threshold) {
-    // try de-allocating
-    TryAndDeAllocateChunk(verbose_ss, info_ss);
-  }
-
   capture_time(mHostPostTime, 1, batchSize);
+
+  if (mMaxChunks > 1) { // lazy allocation is enabled
+    capture_time(mLazyAllocTime, 0, batchSize);
+    // allocate/free chunks here
+    int total_free = 0;
+    for (int i=0; i<mNumChunks; ++i) {
+      total_free += mStoreAvailableIds[i].size();
+    }
+    if (mNumChunks < mMaxChunks && total_free < mBufferConfig.alloc_threshold) {
+      // we need a new chunk
+      AllocateNewChunk(verbose_ss, info_ss);
+    }
+    else if (mNumChunks > 1 && total_free > mBufferConfig.dealloc_threshold) {
+      // try de-allocating
+      TryAndDeAllocateChunk(verbose_ss, info_ss);
+    }
+    capture_time(mLazyAllocTime, 1, batchSize);
+  }
+
   report_time(verbose_ss, info_ss);
   
   return std::string();

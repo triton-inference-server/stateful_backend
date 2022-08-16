@@ -160,6 +160,20 @@ parameters [
     value: { string_value: "0" }
   },
   {
+    key: "detailed_metrics_logging_level"
+    # Which logstream to use for logging additional metrics
+    # VERBOSE: logs will be visible only if `logging_level` is VERBOSE (default)
+    # INFO: logs will be visible even at INFO `logging_level`
+    value: { string_value: "INFO" }
+  },
+  {
+    key: "batch_info_logging_level"
+    # Which logstream to use for logging batch execution info
+    # VERBOSE: logs will be visible only if `logging_level` is VERBOSE
+    # INFO: logs will be visible even at INFO `logging_level` (default)
+    value: { string_value: "VERBOSE" }
+  },
+  {
     key: "logging_level"
     # Metrics report logging::
     #  NONE: No logs from model runner.
