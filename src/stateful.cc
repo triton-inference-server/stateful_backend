@@ -460,11 +460,17 @@ ModelState::InitModelState()
       (std::string("Detailed Metric Logging Level = ") +
        std::to_string(detailed_metrics_logging_level_)).c_str());
 
-  int64_t i64_log_lvl = -1;
+  int64_t i64_log_lvl = 0;
   IGNORE_ERROR(ParseLogLevel(parameters, "batch_info_logging_level",
                               i64_log_lvl));
   if (i64_log_lvl >= 0) {
-    batch_info_logging_level_ = INT2TRITON_LOG_LEVEL(i64_log_lvl);
+    batch_info_logging_level_ = TRITONSERVER_LOG_VERBOSE;
+    if (logging_level_ > 1) { // backend loglevel is VERBOSE
+      batch_info_logging_level_ = TRITONSERVER_LOG_INFO;
+    }
+    else if (i64_log_lvl == 0 && logging_level_ == 0) {
+      batch_info_logging_level_ = TRITONSERVER_LOG_INFO;
+    }
   }
   else if (logging_level_ >= 0) {
     batch_info_logging_level_ = INT2TRITON_LOG_LEVEL(logging_level_);
