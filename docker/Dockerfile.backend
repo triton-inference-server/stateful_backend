@@ -50,7 +50,7 @@ RUN apt-get update && \
             gdb \
             wget && \
     pip3 install --upgrade wheel setuptools && \
-    pip3 install --upgrade grpcio-tools flatbuffers
+    pip3 install --upgrade grpcio-tools flatbuffers packaging
 
 
 # Client build requires recent version of CMake (FetchContent required)
