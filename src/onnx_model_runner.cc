@@ -340,14 +340,14 @@ TrtOnnxModel::Prepare(
   // To add new state tensors with a specific name pattern add another line
   // below with an additional InitTensorNames call.
   auto metadata = mSession->GetModelMetadata();
-  std::string producer_name(metadata.GetProducerName(allocator));
-  std::string graph_name(metadata.GetGraphName(allocator));
-  std::string description(metadata.GetDescription(allocator));
+  std::string producer_name(metadata.GetProducerNameAllocated(allocator).get());
+  std::string graph_name(metadata.GetGraphNameAllocated(allocator).get());
+  std::string description(metadata.GetDescriptionAllocated(allocator).get());
   MY_LOG(verbose_ss) << "Producer name = " << producer_name << std::endl;
   MY_LOG(verbose_ss) << "Graph name = " << graph_name << std::endl;
   MY_LOG(verbose_ss) << "Description = " << description << std::endl;
   if (state_pairs.empty()) {
-    std::string graph_desc(metadata.GetGraphDescription(allocator));
+    std::string graph_desc(metadata.GetGraphDescriptionAllocated(allocator).get());
     RETURN_IF_FALSE(
         StateTensor::InitTensorNames(
             graph_desc, "InputState", "OutputState", input_state_names,
@@ -387,8 +387,7 @@ TrtOnnxModel::Prepare(
   // Iterate over all input nodes
   // We assume that the tensor dimension of 1 is the batch dimension for now.
   for (size_t i = 0; i < num_input_nodes; i++) {
-    char* input_name = mSession->GetInputName(i, allocator);
-    std::string input_name_str(input_name);
+    std::string input_name_str(mSession->GetInputNameAllocated(i, allocator).get());
 
     // print input node types
     Ort::TypeInfo type_info = mSession->GetInputTypeInfo(i);
@@ -399,7 +398,7 @@ TrtOnnxModel::Prepare(
     size_t num_dims = tensor_info.GetDimensionsCount();
 
     MY_LOG(verbose_ss) << "Input " << i << std::endl;
-    MY_LOG(verbose_ss) << "    Name = " << input_name << std::endl;
+    MY_LOG(verbose_ss) << "    Name = " << input_name_str << std::endl;
     MY_LOG(verbose_ss) << "    type = " << type << std::endl;
     MY_LOG(verbose_ss) << "    num_dims = " << num_dims << std::endl;
 
@@ -528,8 +527,7 @@ TrtOnnxModel::Prepare(
              << num_overridable_init_nodes << std::endl;
 
   for (size_t i = 0; i < num_overridable_init_nodes; i++) {
-    char* input_name = mSession->GetOverridableInitializerName(i, allocator);
-    std::string input_name_str(input_name);
+    std::string input_name_str(mSession->GetOverridableInitializerNameAllocated(i, allocator).get());
 
     // print input node types
     Ort::TypeInfo type_info = mSession->GetOverridableInitializerTypeInfo(i);
@@ -540,7 +538,7 @@ TrtOnnxModel::Prepare(
     size_t num_dims = tensor_info.GetDimensionsCount();
 
     MY_LOG(verbose_ss) << "Input " << i << std::endl;
-    MY_LOG(verbose_ss) << "    Name = " << input_name << std::endl;
+    MY_LOG(verbose_ss) << "    Name = " << input_name_str << std::endl;
     MY_LOG(verbose_ss) << "    type = " << type << std::endl;
     MY_LOG(verbose_ss) << "    num_dims = " << num_dims << std::endl;
 
@@ -666,7 +664,7 @@ TrtOnnxModel::Prepare(
   std::vector<std::pair<std::string, void*>> matchingOutputStates{};
 
   for (size_t i = 0; i < num_output_nodes; i++) {
-    char* output_name = mSession->GetOutputName(i, allocator);
+    std::string output_name_str(mSession->GetOutputNameAllocated(i, allocator).get());
 
     // print input node types
     Ort::TypeInfo type_info = mSession->GetOutputTypeInfo(i);
@@ -677,7 +675,7 @@ TrtOnnxModel::Prepare(
     size_t num_dims = tensor_info.GetDimensionsCount();
 
     MY_LOG(verbose_ss) << "Output " << i << std::endl;
-    MY_LOG(verbose_ss) << "    Name = " << output_name << std::endl;
+    MY_LOG(verbose_ss) << "    Name = " << output_name_str << std::endl;
     MY_LOG(verbose_ss) << "    type = " << type << std::endl;
     MY_LOG(verbose_ss) << "    num_dims = " << num_dims << std::endl;
 
@@ -694,7 +692,6 @@ TrtOnnxModel::Prepare(
         dynamic_dim = j;
     }
 
-    std::string output_name_str(output_name);
     // automatically choose one of the output names
     TritonTensorInfo* triton_tensor = GetOutputTensor(output_name_str);
     if (triton_tensor != nullptr) {
