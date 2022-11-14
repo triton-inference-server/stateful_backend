@@ -913,6 +913,13 @@ TrtOnnxModel::Prepare(
     throw;
   }
 
+  // initialize the inputs for warmup
+  for (int i=0; i<mNumInputs; ++i)
+  {
+    mInputs[i]->zero_init(mUseGpu);
+  }
+  mInputReset.one_init(mUseGpu);
+
   // make warmup runs to initialize the engines (crucial for all dims for TRT)
   {
     MY_LOG(verbose_ss) << "Warmup run for batch = " << mBatchDimMax << std::endl;

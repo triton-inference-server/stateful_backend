@@ -31,6 +31,7 @@
 #include <unordered_set>
 #include <sstream>
 #include <unordered_map>
+#include <cuda_fp16.h>
 #include "buffers.h"
 #include "buffers_internal.h"
 #include "common.h"
@@ -94,19 +95,31 @@ class GenericBufferInternal : public GenericBufferBase<AllocFunc, FreeFunc>
     {
       return this->resize_async(samplesCommon::volume(dims), strm);
     }
+    void zero_init()
+    {
+      cudaMemset(this->mBuffer, 0, this->nbBytes());
+    }
 };
 
 using DeviceBufferInternal = GenericBufferInternal<DeviceAllocator, DeviceFree>;
 
 class ManagedBufferInternal {
  public:
+  nvinfer1::DataType dtype;
+  nvinfer1::DataType htype;
   DeviceBufferInternal deviceBuffer;
   HostBuffer hostBuffer;
   ManagedBufferInternal() :
     deviceBuffer(nvinfer1::DataType::kFLOAT),
-    hostBuffer(nvinfer1::DataType::kFLOAT) {}
+    hostBuffer(nvinfer1::DataType::kFLOAT) {
+      dtype = nvinfer1::DataType::kFLOAT;
+      htype = nvinfer1::DataType::kFLOAT;
+    }
   ManagedBufferInternal(nvinfer1::DataType dt, nvinfer1::DataType ht)
-    : deviceBuffer(dt), hostBuffer(ht) {}
+    : deviceBuffer(dt), hostBuffer(ht) {
+      dtype = dt;
+      htype = ht;
+    }
 
   // resize host buffer and selectively resize GPU buffer if isdevice is set
   void resizeAll(const nvinfer1::Dims& dims, bool isdevice)
@@ -146,6 +159,48 @@ class ManagedBufferInternal {
       deviceBuffer.resize_async(newSize, strm);
     else
       hostBuffer.resize(newSize);
+  }
+  void zero_init(bool isdevice)
+  {
+    if (isdevice)
+      deviceBuffer.zero_init();
+    memset(hostBuffer.data(), 0, hostBuffer.nbBytes());
+  }
+
+  template <typename T>
+  void one_init_host() {
+    T* ptr = reinterpret_cast<T*>(hostBuffer.data());
+    for (size_t i=0; i<hostBuffer.size(); ++i) ptr[i] = static_cast<T>(1.0f);
+  }
+  void one_init(bool isdevice)
+  {
+    switch (htype)
+    {
+    case nvinfer1::DataType::kFLOAT:
+      one_init_host<float>();
+      break;
+    case nvinfer1::DataType::kHALF:
+      one_init_host<__half>();
+      break;
+    case nvinfer1::DataType::kINT32:
+      one_init_host<int32_t>();
+      break;
+    case nvinfer1::DataType::kINT8:
+      one_init_host<int8_t>();
+      break;
+    case nvinfer1::DataType::kBOOL:
+      one_init_host<bool>();
+      break;
+
+    default:
+      break;
+    }
+    if (isdevice)
+    {
+      // copy the initialized host buffer (avoiding a cuda kernel for init only)
+      cudaMemcpy(deviceBuffer.data(), hostBuffer.data(),
+            hostBuffer.nbBytes(), cudaMemcpyHostToDevice);
+    }
   }
 };
 
