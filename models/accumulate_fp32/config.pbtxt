@@ -112,8 +112,8 @@ parameters [
     key: "ort_ep"
     # ORT EP to run the model for GPU execution. Ignored if KIND_CPU is set for 
     # instance_group
-    value: { string_value: "trt" }
-    # value: { string_value: "cuda" }
+    # value: { string_value: "trt" }
+    value: { string_value: "cuda" }
   },
   {
     key: "compute_precision"
