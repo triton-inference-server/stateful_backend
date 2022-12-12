@@ -69,9 +69,10 @@ def build_custom_image():
   LogPrint("Building the custom backend image ...", build_cmd)
   try:
     output = subprocess.check_output( shlex.split( build_cmd, posix=(sys.version != "nt") ) ).decode().strip()
-  except Exception as ex:
+  except subprocess.CalledProcessError as ex:
+    print(ex.output.decode())
     LogPrint("ERROR: Couldn't build the custom backend image.", ex)
-    exit(1)
+    exit(ex.returncode)
   return
 
 BACKEND_VOLUMES = {}
