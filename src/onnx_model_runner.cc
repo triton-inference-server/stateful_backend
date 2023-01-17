@@ -179,6 +179,30 @@ guarded_resizeAll(
   }
 }
 
+#define Bytes2GB(sz) (double(sz) / 1024.0 / 1024.0 / 1024.0)
+
+static inline void
+log_cudaMemInfo(
+    std::stringstream& verbose_ss, std::string prefix_log)
+{
+  size_t szFree=0, szTotal=0, szAlloc=0;
+  if (cudaMemGetInfo(&szFree, &szTotal) == cudaSuccess) {
+    szAlloc = szTotal - szFree;
+    char buff[512];
+    sprintf(buff, "Total: %5.2lf GB, Allocated: %5.2lf GB, Free: %5.2lf GB",
+                  Bytes2GB(szTotal), Bytes2GB(szAlloc), Bytes2GB(szFree));
+    const std::string green_text("\033[0;32m");
+    const std::string reset_text("\033[0m");
+    MY_LOG(verbose_ss) << prefix_log << ","
+            << green_text << " GPU Memory :: " << reset_text
+            << buff << std::endl;
+  }
+  else {
+    MY_LOG(verbose_ss) << prefix_log << " :: 'cudaMemGetInfo' returned error: "
+                << cudaGetErrorString(cudaGetLastError()) << std::endl;
+  }
+}
+
 // Prepares the model for inference by creating an execution context and
 // allocating buffers.
 //
@@ -207,6 +231,8 @@ TrtOnnxModel::Prepare(
   log_stream_t& verbose_ss = (mLogLevel > 0 ? ss_logs : ss_null);
   log_stream_t& info_ss = (mLogLevel >= 0 ? ss_logs : ss_null);
 #endif
+  verbose_ss << std::endl;
+  log_cudaMemInfo(verbose_ss, "Beginning of Model load for current instance");
 
   // sanity check the provided buffer config
   RETURN_IF_FALSE(
@@ -329,11 +355,13 @@ TrtOnnxModel::Prepare(
   // Read the model description
   std::vector<std::string> input_state_names, output_state_names;
 
+  log_cudaMemInfo(verbose_ss, "Before ORT Session is created");
   //*************************************************************************
   // Create session and load model into memory
   MY_LOG(verbose_ss) << "Using Onnxruntime C++ API, initializing on device = " << mGpuId
              << std::endl;
   mSession.reset(new Ort::Session(*mEnv, model_path.c_str(), session_options));
+  log_cudaMemInfo(verbose_ss, "After ORT Session is created");
   Ort::AllocatorWithDefaultOptions allocator;
 
   // Read state tensors
@@ -657,6 +685,7 @@ TrtOnnxModel::Prepare(
     append_to_trtexec_string(trtexec_max_string, input_name_str, dimsMax);
     append_to_trtexec_string(trtexec_min_string, input_name_str, dimsMin);
   }
+  log_cudaMemInfo(verbose_ss, "After allocation of Input Tensors");
 
 
   size_t num_output_nodes = mSession->GetOutputCount();
@@ -768,6 +797,7 @@ TrtOnnxModel::Prepare(
     // append_to_trtexec_string(trtexec_max_string, output_name_str, dimsMax);
     // append_to_trtexec_string(trtexec_min_string, output_name_str, dimsMin);
   }
+  log_cudaMemInfo(verbose_ss, "After allocation of Output Tensors");
 
   MY_LOG(verbose_ss) << "Reading output tensors is finished " << std::endl;
   MY_LOG(verbose_ss) << "String for testing with trtexec min shape:" << std::endl;
@@ -816,6 +846,7 @@ TrtOnnxModel::Prepare(
     iTensor.printStateTensors(verbose_ss);
     verbose_ss << std::endl;
   }
+  log_cudaMemInfo(verbose_ss, "After allocation of State Tensors");
 
   try {
     if (mBufferConfig.initial_buffer_size > 0) {
@@ -920,6 +951,7 @@ TrtOnnxModel::Prepare(
   }
   mInputReset.one_init(mUseGpu);
 
+  log_cudaMemInfo(verbose_ss, "Before Warmup");
   // make warmup runs to initialize the engines (crucial for all dims for TRT)
   {
     MY_LOG(verbose_ss) << "Warmup run for batch = " << mBatchDimMax << std::endl;
@@ -957,6 +989,7 @@ TrtOnnxModel::Prepare(
     MY_LOG(verbose_ss) << "Time required to run: " << (end - start) << " milliseconds"
                 << std::endl;
   }
+  log_cudaMemInfo(verbose_ss, "After Warmup");
 
   mRunOptions.SetRunLogSeverityLevel(2);
   // return empty string if we reached here
