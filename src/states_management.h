@@ -110,6 +110,10 @@ void store_states_cpu(
             storage, states, sizesX, sizesY, i, storeids, batchSize, batchStride
           );
         break;
+      default:
+        // SHOULD NOT REACH HERE
+        std::cerr << "Unsupported type in State tensor detected." << std::endl;
+        break;
     }
   }
 }
@@ -153,6 +157,10 @@ void restore_states_cpu(
         restore_states_internal<int8_t, int8_t>(
             storage, states, sizesX, sizesY, i, storeids, batchSize, batchStride
           );
+        break;
+      default:
+        // SHOULD NOT REACH HERE
+        std::cerr << "Unsupported type in State tensor detected." << std::endl;
         break;
     }
   }
