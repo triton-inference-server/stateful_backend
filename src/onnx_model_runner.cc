@@ -803,7 +803,9 @@ TrtOnnxModel::Prepare(
       auto dimsMaxCon = iTensor.mDim;
       dimsMaxCon.d[iTensor.mBatchDim] = mBufferConfig.initial_buffer_size;
       chunk0.emplace_back(
-          allocate_tensor(dimsMaxCon, mUseGpu, iTensor.mType));
+          allocate_tensor(dimsMaxCon, mUseGpu,
+            iTensor.mType == nvinfer1::DataType::kFLOAT && mStoreStatesAsFp16 ?
+              nvinfer1::DataType::kHALF : iTensor.mType));
       iTensor.mStoreBuffer.resize(mMaxChunks);
       iTensor.mStoreBuffer[0] = chunk0.back()->data(mUseGpu);
     }
@@ -1190,7 +1192,9 @@ TrtOnnxModel::AllocateNewChunk(log_stream_t& verbose_ss, log_stream_t& info_ss)
     auto dims = iTensor.mDim;
     dims.d[iTensor.mBatchDim] = mBufferConfig.subsequent_buffer_size;
     newChunk.emplace_back(
-        allocate_tensor(dims, mUseGpu, iTensor.mType,
+        allocate_tensor(dims, mUseGpu,
+          iTensor.mType == nvinfer1::DataType::kFLOAT && mStoreStatesAsFp16 ?
+            nvinfer1::DataType::kHALF : iTensor.mType,
           mAllocFreeAsync ? mCudaStreamExe : nullptr));
 
     const auto statesPtr = newChunk.back()->data(mUseGpu);
