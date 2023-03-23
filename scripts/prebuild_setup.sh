@@ -1,5 +1,5 @@
 #!/bin/bash
-ORT_VERSION=1.9.0
+ORT_VERSION=1.14.0
 ORT_DIR=onnxruntime-linux-x64-gpu-${ORT_VERSION}
 CMAKE_UBUNTU_VERSION=20.04
 
