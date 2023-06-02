@@ -93,12 +93,12 @@ if (WITH_CUSTOM_ORT)
     ${CMAKE_CURRENT_BINARY_DIR}/custom-ort/lib
   )
 else()
-  message("Setting up for stock TRT image ...")
+  message("Setting up for stock Triton image ...")
   set(ORT_INC_DIRS
     /workspace/onnxruntime/include
   )
   set(ORT_LIB_DIRS
-    /workspace/onnxruntime/lib
+    /opt/tritonserver/backends/onnxruntime
   )
 endif()
 

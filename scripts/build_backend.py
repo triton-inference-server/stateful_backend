@@ -105,12 +105,12 @@ def get_backend_build_container():
     cnt_name = backend_container_name
     cnt_image = custom_image_name
   else:
-    LogPrint("Using the stock TensorRT image ...")
-    # Get the stock TRT container
-    cnt_name = stateful_config.TENSORRT_CONTAINER_NAME
+    LogPrint("Using the stock TensorRT and Triton image ...")
+    # Get the stock Triton container
+    cnt_name = stateful_config.TRITON_CONTAINER_NAME
     if FLAGS.backend_container_name != "":
       cnt_name = FLAGS.backend_container_name
-    cnt_image = stateful_config.TENSORRT_IMAGE
+    cnt_image = stateful_config.TRITON_IMAGE
 
   cnt = stateful_utils.get_running_container(cnt_name)
   if cnt is None:
@@ -120,12 +120,33 @@ def get_backend_build_container():
         stack_size=stateful_config.TRITON_STACK, volumes=BACKEND_VOLUMES, \
         as_root=True)
     cnt.start()
-    # if stock TRT container, need to prepare the container
     if not FLAGS.build_with_custom_image:
-      LogPrint(f"Running command '{stateful_config.TENSORRT_CONTAINER_PREBUILD_CMD}' to prepare the container ...")
-      status = cnt.exec_run(stateful_config.TENSORRT_CONTAINER_PREBUILD_CMD)
+      # if stock Triton container, need to prepare the container
+      LogPrint(f"Running command '{stateful_config.TRITON_CONTAINER_PREBUILD_CMD}' to prepare the container ...")
+      status = cnt.exec_run(stateful_config.TRITON_CONTAINER_PREBUILD_CMD)
       if status[0] != 0:
         LogPrint(status[1].decode())
+      LogPrint(f"Copying TensorRT samples to Triton container ...")
+      trt_cnt = stateful_utils.create_container(stateful_config.TENSORRT_IMAGE,
+                                                cnt_name=stateful_config.TENSORRT_CONTAINER_NAME,
+                                                auto_remove=True)
+      trt_cnt.start()
+      files_to_copy = ["buffers.h", "common.h", "safeCommon.h", "half.h",
+                       "logger.cpp", "logger.h", "logging.h",
+                       "sampleOptions.h", "sampleEntrypoints.h", "ErrorRecorder.h"]
+      FILES_PATH = "/workspace/tensorrt/samples/common"
+      cnt.exec_run(f"mkdir -p {FILES_PATH}", tty=True)
+      for file in files_to_copy:
+        cp1_cmd = f"docker cp {stateful_config.TENSORRT_CONTAINER_NAME}:{FILES_PATH}/{file} /tmp/{file}"
+        cp2_cmd = f"docker cp /tmp/{file} {stateful_config.TRITON_CONTAINER_NAME}:{FILES_PATH}/{file}"
+        try:
+          _ = subprocess.check_output( shlex.split( cp1_cmd, posix=(sys.version != "nt") ) ).decode().strip()
+          _ = subprocess.check_output( shlex.split( cp2_cmd, posix=(sys.version != "nt") ) ).decode().strip()
+        except subprocess.CalledProcessError as ex:
+          print(ex.output.decode())
+          LogPrint(f"ERROR: Couldn't copy the required TRT file {file}.", ex)
+          exit(ex.returncode)
+      trt_cnt.stop()
       assert status[0] == 0
   return cnt
 

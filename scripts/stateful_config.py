@@ -34,11 +34,18 @@ if TRITON_REPO_VERSION == "":
 
 STATEFUL_BACKEND_VOL_DEST = "/workspace/stateful"
 
-TENSORRT_CONTAINER_NAME = "test_stateful_tensorrt"
+TENSORRT_CONTAINER_NAME = "test_stateful_tensorrt_for_build"
 TENSORRT_REPO = "nvcr.io/nvidia/tensorrt"
 TENSORRT_TAG = "{0}-py3".format(TRITON_REPO_VERSION)
 TENSORRT_IMAGE = TENSORRT_REPO + ":" + TENSORRT_TAG
-TENSORRT_CONTAINER_PREBUILD_CMD = f"bash {STATEFUL_BACKEND_VOL_DEST}/scripts/prebuild_setup.sh"
+# The following command is not run inside TRT container anymore. See script for details.
+# TENSORRT_CONTAINER_PREBUILD_CMD = f"bash {STATEFUL_BACKEND_VOL_DEST}/scripts/prebuild_setup.sh"
+
+TRITON_CONTAINER_NAME = "test_stateful_triton_for_build"
+TRITON_REPO = "nvcr.io/nvidia/tritonserver"
+TRITON_TAG = "{0}-py3".format(TRITON_REPO_VERSION)
+TRITON_IMAGE = TRITON_REPO + ":" + TRITON_TAG
+TRITON_CONTAINER_PREBUILD_CMD = f"bash {STATEFUL_BACKEND_VOL_DEST}/scripts/prebuild_setup.sh"
 
 STATEFUL_BACKEND_CONTAINER_NAME = "test_stateful_backend"
 STATEFUL_BACKEND_REPO = "triton-{0}-test-backend".format(TRITON_REPO_VERSION)
@@ -84,7 +91,8 @@ TRITON_SERVER_TRT_CACHE_PATH_ENV = "ORT_TENSORRT_CACHE_PATH=/tmp"
 TRITON_SERVER_ENV = [TRITON_SERVER_LD_LIBPATH_PREFIX, TRITON_SERVER_TRT_CACHE_ENABLE_ENV, TRITON_SERVER_TRT_CACHE_PATH_ENV]
 TRITON_SERVER_MODEL_REPO_DIR = TRITON_VOL_DEST + "/models"
 TRITON_SERVER_EXTRA_ARGS = "" #" --model-control-mode explicit --load-model accumulate_fp32 "
-TRITON_SERVER_CMD = "tritonserver --grpc-port {0} --model-repository {1} --backend-config=stateful,ort-logging-level=0 {2}".format(TRITON_GRPC_PORT, TRITON_SERVER_MODEL_REPO_DIR, TRITON_SERVER_EXTRA_ARGS)
+TRITON_SERVER_ORT_LOGGING_LEVEL = 4
+TRITON_SERVER_CMD = "tritonserver --grpc-port {0} --model-repository {1} --backend-config=stateful,ort-logging-level={2} {3}".format(TRITON_GRPC_PORT, TRITON_SERVER_MODEL_REPO_DIR, TRITON_SERVER_ORT_LOGGING_LEVEL, TRITON_SERVER_EXTRA_ARGS)
 TRITON_SERVER_KILL_CMD = "pkill --signal SIGINT tritonserver"
 
 TRITON_CLIENT_CONTAINER_NAME = "test_stateful_client"
@@ -100,8 +108,11 @@ TRITON_CLIENT_CMAKE_INSTALL_CMD = "apt install -y --no-install-recommends cmake-
 TRITON_CLIENT_DEFAULT_CMAKE_INSTALL_CMD = "apt install -y --no-install-recommends cmake"
 
 TRITON_CLIENT_WORKDIR = TRITON_VOL_DEST + "/client/build"
+TRITON_PYCLIENT_DIR = TRITON_VOL_DEST + "/client"
 TRITON_CLIENT_CMAKE_SETUP_CMD = "mkdir -p {0}".format(TRITON_CLIENT_WORKDIR)
 TRITON_CLIENT_CMAKE_CMD = "cmake .."
 TRITON_CLIENT_MAKE_CMD = "make -j"
 TRITON_CLIENT_NAME = "simple_grpc_sequence_stateful_stream_infer_client"
+TRITON_PYCLIENT_NAME = "mixed_io_stream_infer_client.py"
 TRITON_CLIENT_RUN_CMD = "{0}/{1} -u localhost:{2}".format(TRITON_CLIENT_WORKDIR, TRITON_CLIENT_NAME, TRITON_GRPC_PORT)
+TRITON_PYCLIENT_RUN_CMD = "python3 {0}/{1} -u localhost:{2}".format(TRITON_PYCLIENT_DIR, TRITON_PYCLIENT_NAME, TRITON_GRPC_PORT)

@@ -167,7 +167,7 @@ def create_container(img_name:str, cnt_name:str=None, auto_remove=True, \
                   with_gpus=True, ports=None, \
                   shm_size=None, memlock=None, \
                   stack_size=None, volumes=None, \
-                  as_root=False):
+                  as_root=False) -> Container:
   # set the user parameter
   user_param = None
   if not as_root:

@@ -22,10 +22,6 @@
 
 
 #include <omp.h>
-#include "argsParser.h"
-#include "buffers.h"
-#include "common.h"
-#include "parserOnnxConfig.h"
 
 #include <cuda_fp16.h>
 #include <cuda_runtime_api.h>

@@ -22,7 +22,7 @@
 ARG BASE_IMAGE_VERSION
 FROM nvcr.io/nvidia/tensorrt:${BASE_IMAGE_VERSION}-py3
 
-ARG CMAKE_UBUNTU_VERSION=20.04
+ARG CMAKE_UBUNTU_VERSION=22.04
 
 # Ensure apt-get won't prompt for selecting options
 ENV DEBIAN_FRONTEND=noninteractive
@@ -58,7 +58,11 @@ RUN apt-get update && \
 RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | \
       gpg --dearmor - |  \
       tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null && \
-    if [ "$CMAKE_UBUNTU_VERSION" = "20.04" ]; then \
+    if [ "$CMAKE_UBUNTU_VERSION" = "22.04" ]; then \
+      apt-add-repository 'deb https://apt.kitware.com/ubuntu/ jammy main' && \
+      apt-get update && \
+      apt-get install -y --no-install-recommends cmake; \
+    elif [ "$CMAKE_UBUNTU_VERSION" = "20.04" ]; then \
       apt-add-repository 'deb https://apt.kitware.com/ubuntu/ focal main' && \
       apt-get update && \
       apt-get install -y --no-install-recommends cmake; \
@@ -83,12 +87,12 @@ RUN rm -f /usr/local/bin/cmake
 WORKDIR /workspace
 
 # Clone ONNXRT release branch
-RUN git clone --branch rel-1.14.0  https://github.com/microsoft/onnxruntime.git && cd /workspace/onnxruntime && git checkout 6ccaeddefa65ccac402a47fa4d9cad8229794bb2
+RUN git clone --branch rel-1.15.0  https://github.com/microsoft/onnxruntime.git && cd /workspace/onnxruntime && git checkout 638146b79ea52598ece514704d3f592c10fab2f1
 # initialize the submodules in case we need any customizations
 RUN cd /workspace/onnxruntime && git submodule sync --recursive && git submodule update --init --recursive
 
 # Build the ONNXRT
-RUN cd /workspace/onnxruntime && ./build.sh --use_cuda --cuda_home /usr/local/cuda-11.8/ --cuda_version 11.8 --cudnn_home /usr/lib/x86_64-linux-gnu/ --use_tensorrt --tensorrt_home /usr/lib/x86_64-linux-gnu/ --parallel 8 --build_shared_lib --config Release --skip_tests --skip_submodule_sync --build_wheel --use_tensorrt_builtin_parser --disable_contrib_ops
+RUN cd /workspace/onnxruntime && ./build.sh --allow_running_as_root --use_cuda --cuda_home /usr/local/cuda-12.1/ --cuda_version 12.1 --cudnn_home /usr/lib/x86_64-linux-gnu/ --use_tensorrt --tensorrt_home /usr/lib/x86_64-linux-gnu/ --parallel 8 --build_shared_lib --config Release --skip_tests --skip_submodule_sync --build_wheel --use_tensorrt_builtin_parser --disable_contrib_ops
 
 # Go to the build directory and perform the install step
 RUN cd /workspace/onnxruntime/build/Linux/Release && cmake -DCMAKE_INSTALL_PREFIX=/workspace/onnxruntime/install -P cmake_install.cmake

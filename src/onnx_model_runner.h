@@ -34,7 +34,6 @@
 #include <cuda_fp16.h>
 #include "buffers.h"
 #include "buffers_internal.h"
-#include "common.h"
 
 using time_point_t = std::chrono::steady_clock::time_point;  // use wall clock
 #define NOW std::chrono::steady_clock::now

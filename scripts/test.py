@@ -103,10 +103,10 @@ def RunServer(root_dir):
   scnt = stateful_utils.get_running_container(server_container_name)
   if scnt is None:
     scnt = stateful_utils.create_container(stateful_config.TRITONSERVER_IMAGE, \
-        cnt_name=server_container_name, \
+        cnt_name=server_container_name, auto_remove=True, \
         with_gpus=True, ports=stateful_config.TRITON_PORTS, \
         shm_size=stateful_config.TRITON_SHM_SIZE, memlock=stateful_config.TRITON_MEMLOCK, \
-        stack_size=stateful_config.TRITON_STACK, volumes=TRITON_VOLUMES)
+        stack_size=stateful_config.TRITON_STACK, volumes=TRITON_VOLUMES, as_root=True)
     scnt.start()
   assert scnt != None
   scnt.reload()
@@ -155,6 +155,9 @@ def RunClient(root_dir):
   status = ccnt.exec_run(stateful_config.TRITON_CLIENT_RUN_CMD, workdir=stateful_config.TRITON_CLIENT_WORKDIR)
   print(status[1].decode())
   assert status[0] == 0
+  status = ccnt.exec_run(stateful_config.TRITON_PYCLIENT_RUN_CMD, workdir=stateful_config.TRITON_CLIENT_WORKDIR)
+  print(status[1].decode())
+  assert status[0] == 0
   return ccnt
 
 def DoEverything(root_dir):
@@ -181,9 +184,10 @@ def DoEverything(root_dir):
     print("TEST FAILED!")
     exit(1)
   print("TEST PASSED!")
+  if scnt is not None:
+    # always stop/remove the server since it changes with custom path or not
+    scnt.stop()
   if build_backend.FLAGS.stop_containers:
-    if scnt is not None:
-      scnt.stop()
     if ccnt is not None:
       ccnt.stop()
   return
