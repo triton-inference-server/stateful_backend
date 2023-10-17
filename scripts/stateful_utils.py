@@ -167,7 +167,7 @@ def create_container(img_name:str, cnt_name:str=None, auto_remove=True, \
                   with_gpus=True, ports=None, \
                   shm_size=None, memlock=None, \
                   stack_size=None, volumes=None, \
-                  as_root=False) -> Container:
+                  as_root=False, privileged=False) -> Container:
   # set the user parameter
   user_param = None
   if not as_root:
@@ -196,6 +196,7 @@ def create_container(img_name:str, cnt_name:str=None, auto_remove=True, \
   cnt = dcl.containers.create(img_name, name=cnt_name, auto_remove=auto_remove, \
           tty=True, device_requests=devs, ports=ports, shm_size=shm_size, \
           network_mode=network_mode, ulimits=ulimits, volumes=volumes, \
+          privileged=privileged, \
           user=user_param)
   return cnt
   

@@ -127,6 +127,22 @@ in the ONNX model. The files and folder structure can be used
 to serve similar stateful ONNX models.
 
 ## Additional features 
+* CUDA Graph based execution support was added for ORT-TRT path only.
+   ```
+   {
+    key: "enable_cuda_graph"
+    # Enable cuda graph based execution
+    # WARNING: ALWAYS CHECK CORRECTNESS WHEN ENABLING THIS
+    #  Default: 0, disabled
+    value: { string_value: "1" }
+  },
+   ```
+   **NOTE**: There are several restrictions on properly using CUDA Graph-based execution:
+   * CUDA Graph capture in ORT is not thread-safe. If you have multiple model instances, each one needs to be loaded sequentially (Triton's default behavior) to capture the graphs sequentially.
+   * If you have multiple models to load in the same Triton server, you need to load them sequentially as well if more than one model is trying to utilize CUDA Graph (use `--model-load-thread-count 1` when launching the server).
+   * Even if both of the above conditions are met, you should check ORT logs to make sure that the graph is captured correctly during model loading so that it will only replay during inference requests.
+   * If ORT needs to rebuild the engine due to an input shape change, for example, it will trigger another graph capture which might **crash** the server if another model instance is trying to replay their own CUDA graph.
+
 * Stateful backend can do dynamic batching along any tensor dimension. The batch dimension should be marked with -1 in the model configuration file for the input and output tensors. 
 * The state tensors can only have one dynamic dimension that is assumed to be the batch dimension. 
 * The ONNX model should contain the initial values for the state tensors. `CONTROL_SEQUENCE_START` control input can be mapped to a boolean model input tensor

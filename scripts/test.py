@@ -53,6 +53,7 @@ def run_server_thread_func(cnt):
   custom_env = None
   if build_backend.FLAGS.build_with_custom_image:
     custom_env = stateful_config.TRITON_SERVER_ENV
+  print(stateful_config.TRITON_SERVER_CMD)
   status = cnt.exec_run(stateful_config.TRITON_SERVER_CMD, stream=True, environment=custom_env)
   outgen = status[1]
   global g_server_started, g_server_exited, g_server_crashed
@@ -62,7 +63,7 @@ def run_server_thread_func(cnt):
     print(ln.decode(), end='')
     if ln.decode().find("Started GRPCInferenceService") >= 0:
       g_server_started = l_server_started = True
-    if ln.decode().find("successfully unloaded") >= 0:
+    if ln.decode().find("successfully unloaded") >= 0 or ln.decode().find("Exiting immediately") >= 0:
       g_server_exited = True
       break
   if not l_server_started: # server didn't start for some reason
@@ -152,9 +153,11 @@ def RunClient(root_dir):
   status = ccnt.exec_run(stateful_config.TRITON_CLIENT_MAKE_CMD, workdir=stateful_config.TRITON_CLIENT_WORKDIR)
   # print(status[0], status[1].decode())
   assert status[0] == 0
+  print(stateful_config.TRITON_CLIENT_RUN_CMD)
   status = ccnt.exec_run(stateful_config.TRITON_CLIENT_RUN_CMD, workdir=stateful_config.TRITON_CLIENT_WORKDIR)
   print(status[1].decode())
   assert status[0] == 0
+  print(stateful_config.TRITON_PYCLIENT_RUN_CMD)
   status = ccnt.exec_run(stateful_config.TRITON_PYCLIENT_RUN_CMD, workdir=stateful_config.TRITON_CLIENT_WORKDIR)
   print(status[1].decode())
   assert status[0] == 0

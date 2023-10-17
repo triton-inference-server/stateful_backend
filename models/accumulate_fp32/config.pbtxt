@@ -112,8 +112,8 @@ parameters [
     key: "ort_ep"
     # ORT EP to run the model for GPU execution. Ignored if KIND_CPU is set for 
     # instance_group
-    # value: { string_value: "trt" }
-    value: { string_value: "cuda" }
+    value: { string_value: "trt" }
+    # value: { string_value: "cuda" }
   },
   {
     key: "compute_precision"
@@ -142,6 +142,13 @@ parameters [
   {
     key: "enable_trt_caching"
     # Enable TRT engine caching
+    #  Default: 0, disabled
+    value: { string_value: "1" }
+  },
+  {
+    key: "enable_cuda_graph"
+    # Enable cuda graph based execution
+    # WARNING: ALWAYS CHECK CORRECTNESS WHEN ENABLING THIS
     #  Default: 0, disabled
     value: { string_value: "1" }
   },

@@ -103,6 +103,7 @@ class ModelState : public BackendModel {
   int64_t detailed_metrics_logging_level_;
   std::string metric_logging_frequency_seconds_;
   std::string enable_trt_caching_;
+  std::string enable_cuda_graph_;
   std::string trt_cache_dir_;
   std::string always_pad_to_max_batch_;
   bool infer_end_requests_;

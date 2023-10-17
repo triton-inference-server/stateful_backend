@@ -523,6 +523,19 @@ ModelState::InitModelState()
       (std::string("Enable TRT Engine Caching = ") + enable_trt_caching_)
           .c_str());
 
+  common::TritonJson::Value enable_cuda_graph;
+  CHECK_IF_ERROR(
+      parameters.MemberAsObject("enable_cuda_graph", &enable_cuda_graph),
+      parse_succeeded);
+  if (parse_succeeded) {
+    IGNORE_ERROR(enable_cuda_graph.MemberAsString(
+        "string_value", &enable_cuda_graph_));
+  }
+  LOG_MESSAGE(
+      TRITONSERVER_LOG_INFO,
+      (std::string("Enable CUDA Graph Execution = ") + enable_cuda_graph_)
+          .c_str());
+
   common::TritonJson::Value trt_cache_dir;
   CHECK_IF_ERROR(
       parameters.MemberAsObject("trt_cache_dir", &trt_cache_dir),
@@ -911,6 +924,10 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
   if (model_state->enable_trt_caching_.compare("1") == 0)
     enable_trt_caching = true;
 
+  bool enable_cuda_graph = false;
+  if (model_state->enable_cuda_graph_.compare("1") == 0)
+    enable_cuda_graph = true;
+
   int64_t metricLoggingFreq = 0;  // disabled
   try {
     if (!model_state->metric_logging_frequency_seconds_.empty()) {
@@ -932,6 +949,7 @@ TRITONBACKEND_ModelInstanceInitialize(TRITONBACKEND_ModelInstance* instance)
         model_state->pref_batch_sizes_, model_state->input_tensors_,
         model_state->output_tensors_, model_state->start_tensor_name_, useTrtEp,
         useFp16, store_states_as_fp16, pad_to_max_batch, enable_trt_caching,
+        enable_cuda_graph,
         model_state->trt_cache_dir_, model_state->logging_level_,
         metricLoggingFreq, model_state->detailed_metrics_logging_level_,
         model_state->max_sequence_idle_microseconds_);

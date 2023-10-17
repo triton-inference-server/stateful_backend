@@ -64,8 +64,10 @@ def remove_custom_image():
   return
 
 def build_custom_image():
+  build_type_arg = "--build-arg BUILD_TYPE=Debug" if FLAGS.debug_ort else ""
   build_cmd = (f"docker build --tag {stateful_config.STATEFUL_BACKEND_IMAGE} -f docker/Dockerfile.backend " \
-    + f" --build-arg BASE_IMAGE_VERSION={stateful_config.TRITON_REPO_VERSION} {FLAGS.docker_build_extra_args} .")
+    + f" --build-arg BASE_IMAGE_VERSION={stateful_config.TRITON_REPO_VERSION} {build_type_arg} " \
+    + f" {FLAGS.docker_build_extra_args} .")
   LogPrint("Building the custom backend image ...", build_cmd)
   try:
     output = subprocess.check_output( shlex.split( build_cmd, posix=(sys.version != "nt") ) ).decode().strip()
@@ -82,6 +84,10 @@ def setup_env(root_dir):
   BACKEND_VOL_SRC = root_dir
   BACKEND_VOLUMES[BACKEND_VOL_SRC] = {
     'bind': stateful_config.TRITON_VOL_DEST, 'mode': 'rw'
+  }
+  # just for debugging
+  BACKEND_VOLUMES[BACKEND_VOL_SRC+"/.."] = {
+    'bind': '/workspace/onnx-stateful', 'mode': 'rw'
   }
   return
 
@@ -118,7 +124,7 @@ def get_backend_build_container():
         cnt_name=cnt_name, with_gpus=FLAGS.with_gpus, \
         shm_size=stateful_config.TRITON_SHM_SIZE, memlock=stateful_config.TRITON_MEMLOCK, \
         stack_size=stateful_config.TRITON_STACK, volumes=BACKEND_VOLUMES, \
-        as_root=True)
+        as_root=True, privileged=True)
     cnt.start()
     if not FLAGS.build_with_custom_image:
       # if stock Triton container, need to prepare the container
@@ -169,6 +175,8 @@ def build_custom_backend():
     LogPrint(status[1].decode())
     assert status[0] == 0
     cmake_opts = stateful_config.STATEFUL_BACKEND_BUILD_CMAKE_OPTS
+    if FLAGS.debug_backend:
+      cmake_opts += " -DCMAKE_BUILD_TYPE=Debug "
     if FLAGS.build_with_custom_image:
       cmake_opts += " -DWITH_CUSTOM_ORT=ON "
     cmake_cmd = "cmake " + cmake_opts + " .. "
@@ -235,6 +243,12 @@ def parse_args(args=sys.argv[1:]):
   parser.add_argument("--backend_container_name", 
                       type=str, default="", 
                       help="Override the container name of the custom image.")
+  parser.add_argument("--debug_ort", 
+                      action='store_true', 
+                      help="Create debug builds of ORT.")
+  parser.add_argument("--debug_backend", 
+                      action='store_true', 
+                      help="Create debug builds of the backend.")
   
   # update the global variable FLAGS
   global FLAGS

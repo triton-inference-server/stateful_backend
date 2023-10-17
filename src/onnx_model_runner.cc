@@ -27,6 +27,7 @@
 #include <cuda_runtime_api.h>
 #include <algorithm>
 #include <random>
+#include <vector>
 #include <string>
 #include "NvInfer.h"
 
@@ -215,6 +216,7 @@ TrtOnnxModel::Prepare(
     const std::vector<TritonTensorInfo>& output_tensors,
     std::string reset_tensor_name, bool useTrtEp, bool useFp16,
     bool store_states_as_fp16, bool pad_to_max_batch, bool enable_trt_caching,
+    bool enable_cuda_graph,
     std::string trt_cache_dir, int64_t logLevel, int64_t metric_logging_freq,
     int64_t metric_logging_level, int64_t seq_timeout_us)
 {
@@ -307,28 +309,48 @@ TrtOnnxModel::Prepare(
   if (mUseGpu) {
     std::string ort_status;
     if (mUseTrtEp) {
-      OrtTensorRTProviderOptions trt_options{
-          mGpuId,
-          1,
-          mCudaStreamExe,
-          1000,                              // trt_max_partition_iterations
-          1,                                 // trt_min_subgraph_size
-          static_cast<size_t>(4) << 30,      // max_workspace_size
-          useFp16,                           // trt_fp16_enable
-          0,                                 // trt_int8_enable
-          nullptr,                           // trt_int8_calibration_table_name
-          0,                                 // trt_int8_calibration_table_name
-          0,                                 // trt_dla_enable
-          0,                                 // trt_dla_core
-          0,                                 // trt_dump_subgraphs
-          enable_trt_caching ? 1 : 0,        // trt_engine_cache_enable
-          enable_trt_caching ? trt_cache_dir.c_str()
-                             : nullptr,  // trt_engine_cache_path
-          0,                             // trt_engine_decryption_enable
-          nullptr,                       // trt_engine_decryption_lib_path
-          0                              // trt_force_sequential_engine_build
+      const auto& api = Ort::GetApi();
+      OrtTensorRTProviderOptionsV2* trt_options = nullptr;
+      RETURN_IF_FALSE(
+        api.CreateTensorRTProviderOptions(&trt_options) == nullptr,
+        "Could not create OrtTensorRTProviderOptionsV2 instance.");
+      std::unique_ptr<OrtTensorRTProviderOptionsV2,
+                      decltype(api.ReleaseTensorRTProviderOptions)> 
+                      rel_trt_options(trt_options, 
+                                      api.ReleaseTensorRTProviderOptions);
+      std::vector<const char*> keys{
+        "device_id", "trt_max_partition_iterations", "has_user_compute_stream",
+        "trt_min_subgraph_size", "trt_max_workspace_size", "trt_fp16_enable",
+        "trt_engine_cache_enable", "trt_engine_cache_path", "trt_cuda_graph_enable",
       };
-      session_options.AppendExecutionProvider_TensorRT(trt_options);
+      std::vector<const char*> values{
+        std::to_string(mGpuId).c_str(), "1000", "1", "1",
+        std::to_string(static_cast<size_t>(4) << 30).c_str(),
+        std::to_string(useFp16 ? 1 : 0).c_str(),
+        std::to_string(enable_trt_caching ? 1 : 0).c_str(),
+        enable_trt_caching ? trt_cache_dir.c_str() : "",
+        std::to_string(enable_cuda_graph ? 1 : 0).c_str(),
+        };
+      RETURN_IF_FALSE(
+        api.UpdateTensorRTProviderOptions(rel_trt_options.get(),
+        keys.data(), values.data(), keys.size()) == nullptr,
+        "Could not update OrtTensorRTProviderOptionsV2 instance.");
+      // need to use a different API to update the stream
+      RETURN_IF_FALSE(
+        api.UpdateTensorRTProviderOptionsWithValue(rel_trt_options.get(), "user_compute_stream",
+          mCudaStreamExe) == nullptr,
+        "Could not update the compute stream.");
+      session_options.AppendExecutionProvider_TensorRT_V2(*rel_trt_options);
+#ifdef VERBOSE_OUTPUT
+      {
+        OrtAllocator* allocator;
+        RETURN_IF_FALSE(api.GetAllocatorWithDefaultOptions(&allocator) == nullptr, "Couldn't get the default allocator.");
+        char* trt_options_str = nullptr;
+        RETURN_IF_FALSE(api.GetTensorRTProviderOptionsAsString(rel_trt_options.get(), allocator, &trt_options_str) == nullptr, "Couldnt get TRT option string.");
+        MY_LOG(verbose_ss) << trt_options_str << std::endl;
+        RETURN_IF_FALSE(api.AllocatorFree(allocator, (void*)trt_options_str) == nullptr, "Couldn't free TRT option string.");
+      }
+#endif
     }
     OrtCUDAProviderOptions cuda_options;
     cuda_options.device_id = mGpuId;

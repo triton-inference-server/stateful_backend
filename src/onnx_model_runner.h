@@ -528,7 +528,8 @@ class TrtOnnxModel {
       const std::vector<TritonTensorInfo>& output_tensors,
       std::string reset_tensor_name, bool useTrtEp = true, bool useFp16 = false,
       bool store_states_as_fp16 = false, bool pad_to_max_batch = false,
-      bool enable_trt_caching = false, std::string trt_cache_dir = "/tmp",
+      bool enable_trt_caching = false, bool enable_cuda_graph = false,
+      std::string trt_cache_dir = "/tmp",
       int64_t logLevel = 1, int64_t metric_logging_freq = 0,
       int64_t metric_logging_level = 3,
       int64_t sequnce_timeout_microseconds = INT64_MAX);
@@ -618,6 +619,7 @@ class TrtOnnxModel {
   int mBatchDimMax{2};
 
   bool mPaddBatchSize{false};
+  bool mEnableCudaGraph{false};
 
   cudaStream_t mCudaStreamExe;
   cudaStream_t mCudaStreamCpy;

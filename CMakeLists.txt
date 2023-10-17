@@ -85,6 +85,7 @@ if (WITH_CUSTOM_ORT)
   message("Setting up for custom ORT image ...")
   file(COPY /workspace/onnxruntime/install/ DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/custom-ort)
   set(ORT_INC_DIRS
+    ${CMAKE_CURRENT_BINARY_DIR}/custom-ort/include/onnxruntime
     ${CMAKE_CURRENT_BINARY_DIR}/custom-ort/include/onnxruntime/core/session
     ${CMAKE_CURRENT_BINARY_DIR}/custom-ort/include/onnxruntime/core/providers/tensorrt
     ${CMAKE_CURRENT_BINARY_DIR}/custom-ort/include/onnxruntime/core/providers/cuda
@@ -131,7 +132,7 @@ target_compile_features(triton-stateful-backend PRIVATE cxx_std_11)
 target_compile_options(
   triton-stateful-backend PRIVATE
   $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
-    -Wall -Wextra -Wno-unused-parameter -Wno-type-limits>
+    -Wall -Wextra -Wno-unused-parameter -Wno-type-limits> -Wno-deprecated-declarations
 )
 
 target_link_libraries(
@@ -158,7 +159,7 @@ set_target_properties(
   LINK_FLAGS "-Wl,--version-script libtriton_stateful.ldscript"
 )
 
-set_property(TARGET triton-stateful-backend PROPERTY CUDA_ARCHITECTURES 70 75 80)
+set_property(TARGET triton-stateful-backend PROPERTY CUDA_ARCHITECTURES 70 75 80 86)
 
 #
 # Install
