@@ -141,7 +141,8 @@ def RunClient(root_dir):
   print("Client container running ...", flush=True)
   # The next few setup commands are only needed for SDK container versions > 22.03
   if new_container_created and version.parse(stateful_config.TRITON_REPO_VERSION) > version.parse("22.03"):
-    stateful_utils.install_default_cmake(ccnt)
+    # stateful_utils.install_default_cmake(ccnt)
+    stateful_utils.install_newer_cmake(ccnt, False)
     print("CMake is now installed!")
 
   status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_SETUP_CMD)

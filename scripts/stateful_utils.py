@@ -123,11 +123,18 @@ def get_running_container(cnt_name:str) -> Container:
     cnt.start()
   return cnt
 
+def fix_gmake_issue(ccnt: Container):
+  status = ccnt.exec_run("ln -s /usr/bin/make /usr/bin/gmake")
+  # print(status[0], status[1].decode())
+  assert status[0] == 0
+  return
+
 def install_default_cmake(ccnt: Container):
   print("Installing default cmake ...")
   status = ccnt.exec_run(stateful_config.TRITON_CLIENT_DEFAULT_CMAKE_INSTALL_CMD)
   # print(status[0], status[1].decode())
   assert status[0] == 0
+  fix_gmake_issue(ccnt)
   return
 
 def fix_pubkey_issue(ccnt: Container):
@@ -137,9 +144,20 @@ def fix_pubkey_issue(ccnt: Container):
   assert status[0] == 0
   return
 
-def install_newer_cmake(ccnt: Container):
-  # This key fix should be temporary until Triton SDK container is updated
-  fix_pubkey_issue(ccnt)
+def parse_ubuntu_codename(info: str):
+  for ln in info.splitlines():
+    if ln.find("UBUNTU_CODENAME") >= 0:
+      return ln.strip().split("=")[1]
+  return None
+
+def install_newer_cmake(ccnt: Container, fix_pubkey=True):
+  status = ccnt.exec_run("cat /etc/os-release")
+  # print(status[0], status[1].decode())
+  assert status[0] == 0
+  UBUNTU_CODENAME = parse_ubuntu_codename(status[1].decode())
+  if fix_pubkey:
+    # This key fix should be temporary until Triton SDK container is updated
+    fix_pubkey_issue(ccnt)
 
   print("Installing newer cmake ...")
   # The following are necessary for 22.04 and newer SDK containers
@@ -152,7 +170,7 @@ def install_newer_cmake(ccnt: Container):
   status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_ADD_KEY_CMD)
   # print(status[0], status[1].decode())
   assert status[0] == 0
-  status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_ADD_REPO_CMD)
+  status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_ADD_REPO_CMD.format(UBUNTU_CODENAME))
   # print(status[0], status[1].decode())
   assert status[0] == 0
   status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_APT_UPDATE_CMD)
@@ -161,6 +179,7 @@ def install_newer_cmake(ccnt: Container):
   status = ccnt.exec_run(stateful_config.TRITON_CLIENT_CMAKE_INSTALL_CMD)
   # print(status[0], status[1].decode())
   assert status[0] == 0
+  fix_gmake_issue(ccnt)
   return
 
 def create_container(img_name:str, cnt_name:str=None, auto_remove=True, \

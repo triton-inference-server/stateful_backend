@@ -22,7 +22,7 @@
 ARG BASE_IMAGE_VERSION
 FROM nvcr.io/nvidia/tensorrt:${BASE_IMAGE_VERSION}-py3
 
-ARG CMAKE_UBUNTU_VERSION=22.04
+ARG CMAKE_UBUNTU_VERSION=20.04
 ARG BUILD_TYPE=Release
 
 # Ensure apt-get won't prompt for selecting options
@@ -57,25 +57,16 @@ RUN apt-get update && \
     pip3 install --upgrade grpcio-tools flatbuffers packaging
 
 
+# Remove older cmake
+RUN rm -f /usr/local/bin/cmake
+
 # Client build requires recent version of CMake (FetchContent required)
 RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | \
       gpg --dearmor - |  \
       tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null && \
-    if [ "$CMAKE_UBUNTU_VERSION" = "22.04" ]; then \
-      apt-add-repository 'deb https://apt.kitware.com/ubuntu/ jammy main' && \
-      apt-get update && \
-      apt-get install -y --no-install-recommends cmake; \
-    elif [ "$CMAKE_UBUNTU_VERSION" = "20.04" ]; then \
-      apt-add-repository 'deb https://apt.kitware.com/ubuntu/ focal main' && \
-      apt-get update && \
-      apt-get install -y --no-install-recommends cmake; \
-    elif [ "$CMAKE_UBUNTU_VERSION" = "18.04" ]; then \
-      apt-add-repository 'deb https://apt.kitware.com/ubuntu/ bionic main' && \
-      apt-get update && \
-      apt-get install -y --no-install-recommends cmake; \
-    else \
-      echo "ERROR: Only support CMAKE_UBUNTU_VERSION to be 18.04 or 20.04" && false; \
-    fi && \
+    apt-add-repository "deb https://apt.kitware.com/ubuntu/ $(. /etc/os-release; echo ${VERSION_CODENAME/*, /}) main" && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends cmake; \
     cmake --version
 
 # Build expects "python" executable (not python3).
@@ -83,11 +74,11 @@ RUN rm -f /usr/bin/python && \
     ln -s /usr/bin/python3 /usr/bin/python
 
 
-# Remove older cmake
-RUN rm -f /usr/local/bin/cmake
-
 # Workspace dir
 WORKDIR /workspace
+
+# Add TRT 8.6 tar
+ADD ./TensorRT-8.6.1.6.Linux.x86_64-gnu.cuda-11.8.tar.gz /workspace/
 
 # Clone ONNXRT release branch
 RUN git clone --branch rel-1.16.1  https://github.com/microsoft/onnxruntime.git && cd /workspace/onnxruntime && git checkout 2a1fd2586ff9ea7b2af94a7d4b1b3c124f5f3cda
@@ -97,7 +88,7 @@ RUN cd /workspace/onnxruntime && git cherry-pick -n 207ce2b5994a7c6658e3090b4c62
 RUN cd /workspace/onnxruntime && git submodule sync --recursive && git submodule update --init --recursive
 
 # Build the ONNXRT
-RUN cd /workspace/onnxruntime && ./build.sh --allow_running_as_root --use_cuda --cuda_home /usr/local/cuda-12.2/ --cuda_version 12.2 --cudnn_home /usr/lib/x86_64-linux-gnu/ --use_tensorrt --tensorrt_home /usr/lib/x86_64-linux-gnu/ --parallel 8 --build_shared_lib --config ${BUILD_TYPE} --skip_tests --skip_submodule_sync --build_wheel --use_tensorrt_builtin_parser --disable_contrib_ops
+RUN cd /workspace/onnxruntime && ./build.sh --allow_running_as_root --use_cuda --cuda_home /usr/local/cuda-11.8/ --cuda_version 11.8 --cudnn_home /usr/lib/x86_64-linux-gnu/ --use_tensorrt --tensorrt_home /workspace/TensorRT-8.6.1.6 --parallel 8 --build_shared_lib --config ${BUILD_TYPE} --skip_tests --skip_submodule_sync --build_wheel --use_tensorrt_builtin_parser --disable_contrib_ops
 
 # Go to the build directory and perform the install step
 RUN cd /workspace/onnxruntime/build/Linux/${BUILD_TYPE} && cmake -DCMAKE_INSTALL_PREFIX=/workspace/onnxruntime/install -P cmake_install.cmake

@@ -102,9 +102,9 @@ TRITON_CLIENT_PUBKEY_FIX_CMD = "apt-key adv --keyserver keyserver.ubuntu.com --r
 TRITON_CLIENT_CMAKE_WGET_KEY_CMD = "wget https://apt.kitware.com/keys/kitware-archive-latest.asc"
 TRITON_CLIENT_CMAKE_GPG_KEY_CMD = "gpg --dearmor kitware-archive-latest.asc"
 TRITON_CLIENT_CMAKE_ADD_KEY_CMD = "mv kitware-archive-latest.asc.gpg /etc/apt/trusted.gpg.d/kitware.gpg"
-TRITON_CLIENT_CMAKE_ADD_REPO_CMD = "apt-add-repository 'deb https://apt.kitware.com/ubuntu/ focal main'"
+TRITON_CLIENT_CMAKE_ADD_REPO_CMD = "apt-add-repository 'deb https://apt.kitware.com/ubuntu/ {0} main'"
 TRITON_CLIENT_CMAKE_APT_UPDATE_CMD = "apt update"
-TRITON_CLIENT_CMAKE_INSTALL_CMD = "apt install -y --no-install-recommends cmake-data=3.18.4-0kitware1ubuntu20.04.1 cmake=3.18.4-0kitware1ubuntu20.04.1"
+TRITON_CLIENT_CMAKE_INSTALL_CMD = "apt install -y --no-install-recommends cmake" # " cmake-data=3.18.4-0kitware1ubuntu20.04.1 cmake=3.18.4-0kitware1ubuntu20.04.1"
 
 TRITON_CLIENT_DEFAULT_CMAKE_INSTALL_CMD = "apt install -y --no-install-recommends cmake"
 
